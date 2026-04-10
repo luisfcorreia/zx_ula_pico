@@ -14,7 +14,8 @@ pico_generate_pio_header(zx_pico_ula ${CMAKE_CURRENT_SOURCE_DIR}/src/video/pixel
 pico_generate_pio_header(zx_pico_ula ${CMAKE_CURRENT_SOURCE_DIR}/src/dram/dram.pio)
 pico_generate_pio_header(zx_pico_ula ${CMAKE_CURRENT_SOURCE_DIR}/src/cpu/cpu_clock.pio)
 
-add_executable(zx_pico_ula
+add_executable(
+    zx_pico_ula
     src/main.cpp
     src/clock/clock.cpp
     src/video/video.cpp

@@ -1,19 +1,19 @@
-ZX Spectrum 48K ULA — RP2350B Drop-in Replacement
+# ZX Spectrum 48K ULA — RP2350B Drop-in Replacement
+
 Project goal
 Replace the Ferranti 6C001E-7 ULA chip in an unmodified ZX Spectrum 48K PCB with an RP2350B. The Pico boots before the Z80 gets a clock (ULA drives Z80 clock, so no clock until Pico is ready). RP2350B is 5V tolerant — no level shifting needed. Target 252 MHz overclock.
 
-Hardware facts established
+## Hardware facts established
 
-No pin 39 (14 MHz crystal) — RP2350B generates its own clocks via PLL
-252 MHz system clock — 12 MHz XOSC × 126 ÷ 6 = 252 MHz = 36 × 7 MHz (exact integer ratio, zero jitter pixel clock)
-7 MHz pixel clock — PIO divider = 36
-3.5 MHz CPU clock — contention-gated, driven by PIO
-RP2350B has 48 GPIO — all allocated, tight but sufficient
-3.3V outputs — 4-bit R-2R DAC per YUV channel, neutral = code 8 = 1.65V
-YUV lookup tables — 16 entries, indexed by {BRIGHT,G,R,B}, values pending oscilloscope measurement on real 6C001E-7
+*No pin 39 (14 MHz crystal) — RP2350B generates its own clocks via PLL
+*252 MHz system clock — 12 MHz XOSC × 126 ÷ 6 = 252 MHz = 36 × 7 MHz (exact integer ratio, zero jitter pixel clock)
+*7 MHz pixel clock — PIO divider = 36
+*3.5 MHz CPU clock — contention-gated, driven by PIO
+*RP2350B has 48 GPIO — all allocated, tight but sufficient
+*3.3V outputs — 4-bit R-2R DAC per YUV channel, neutral = code 8 = 1.65V
+*YUV lookup tables — 16 entries, indexed by {BRIGHT,G,R,B}, values pending oscilloscope measurement on real 6C001E-7
 
-
-Architecture
+## Architecture
 BlockResourceResponsibilityCore 0ARM Cortex-M33Raster loop, runs forever, one iteration per pixel clock (36 sys cycles budget)Core 1ARM Cortex-M33Port 0xFE read/write, border colour, sound, flash counter, keyboardPIO0 SM07 MHzSync generator (HSync, VSync, /INT)PIO0 SM17 MHzPixel shift register, RGBi outputPIO0 SM27 MHzYUV DAC outputPIO0 SM37 MHzCPU clock, contention-gatedPIO1 SM0252 MHzDRAM controller (RAS/CAS/WE, 4 ns resolution)PIO1 SM1252 MHzD bus capture (DataLatch/AttrLatch timing)PIO1 SM2252 MHzRAS-only refresh cycles
 
 GPIO pin map
@@ -40,7 +40,8 @@ GP45      R            RGBi Red bonus (output)
 GP46      G            RGBi Green bonus (output)
 GP47      B            RGBi Blue bonus (output)
 
-Project file structure
+## Project file structure
+```
 zx_pico_ula/
 ├── CMakeLists.txt
 ├── include/
@@ -62,8 +63,9 @@ zx_pico_ula/
     │   └── cpu_clock.pio  — contention-gated 3.5 MHz clock
     └── io/
         └── io.cpp         — Core 1: port 0xFE, keyboard, sound, flash
+```
 
-What works / what's next
+## What works / what's next
 Designed and stubbed:
 
 Full GPIO map and direction logic
