@@ -17,6 +17,7 @@ Replace the Ferranti 6C001E-7 ULA chip in an unmodified ZX Spectrum 48K PCB with
 ## Architecture
 
 |Block|Resource|Responsibility|
+|-|-|-|
 |Core 0|ARM Cortex-M33|Raster loop, runs forever, one iteration per pixel clock (36 sys cycles budget)|
 |Core 1|ARM Cortex-M33|Port 0xFE read/write, border colour, sound, flash counter, keyboard|
 |PIO0 SM0|7 MHz|Sync generator (HSync, VSync, /INT)|
