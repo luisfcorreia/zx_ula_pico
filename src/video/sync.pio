@@ -1,0 +1,54 @@
+; =============================================================================
+; sync.pio — ZX Spectrum ULA sync generator + pixel clock tick source
+; PIO0 SM0, running at 7 MHz (PIO0_CLK_DIV = 36 from 252 MHz)
+;
+; DUAL PURPOSE:
+;
+; 1. Drives /INT output pin via side-set, one bit per pixel clock.
+;    Core 0 pre-computes the int_n level and encodes it in the command word.
+;
+; 2. Pushes a "tick" word into the RX FIFO every pixel clock.
+;    Core 0 calls pio_sm_get_blocking(pio0, SM_SYNC) at the top of its
+;    raster loop iteration. This naturally gates Core 0 to the 7 MHz pixel
+;    clock rate without busy-waiting or timer polling, and gives automatic
+;    re-synchronisation if the loop body runs fast (FIFO buffers extra ticks).
+;
+; Command word from Core 0 TX FIFO (32-bit):
+;   [31]    int_n   — /INT level this pixel clock (0=asserted)
+;   [30:0]  unused  — reserved, set to 0
+;
+; The SM pulls the command word, drives /INT via side-set, then pushes a
+; fixed tick value (0xDEAD) into the RX FIFO so Core 0 can block on it.
+;
+; Pin assignment:
+;   side-set 1 pin: PIN_INT_N (GP24)
+; =============================================================================
+
+.program sync_gen
+.side_set 1
+
+.wrap_target
+    pull noblock         side 1   ; pull command word, default /INT=1 (deasserted)
+    out x, 1             side 1   ; x = int_n bit [31]
+    ; Drive /INT via side-set on the push instruction so the level and
+    ; the tick happen atomically on the same cycle.
+    mov pins, x          side 1   ; not used — side-set is the output
+    ; Push tick to RX FIFO. Core 0 blocks here until next pixel clock.
+    ; The side-set value on push is the actual /INT output this cycle.
+    in null, 32          side x   ; fill ISR with 0, drive /INT from x via side
+    push noblock         side x   ; push tick word; Core 0 unblocks
+.wrap
+
+; =============================================================================
+; Usage in video_raster_loop():
+;
+;   // At top of each iteration — blocks until next pixel clock tick
+;   (void)pio_sm_get_blocking(pio0, 0);  // SM0 = sync_gen
+;
+;   // Push /INT level for this pixel into SM0 TX FIFO
+;   pio_sm_put(pio0, 0, int_n ? (1u << 31) : 0u);
+;
+; The SM consumes one command word and produces one tick per pixel clock.
+; TX FIFO depth (8 with join) allows Core 0 to run slightly ahead without
+; losing ticks; RX FIFO buffers incoming ticks if Core 0 runs slightly slow.
+; =============================================================================

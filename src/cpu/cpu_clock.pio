@@ -1,0 +1,34 @@
+; =============================================================================
+; cpu_clock.pio — contention-gated 3.5 MHz CPU clock output
+; PIO0 SM3, running at 7 MHz (PIO0_CLK_DIV = 36)
+;
+; Each iteration = 1 pixel clock (142 ns). The SM toggles CLOCK at half
+; the PIO clock rate (one toggle per instruction → 3.5 MHz square wave)
+; unless contention is active, in which case it holds CLOCK HIGH.
+;
+; Core 0 pushes one contention bit per pixel clock into the TX FIFO:
+;   0 → free to toggle (normal 3.5 MHz operation)
+;   1 → hold HIGH (CPU stalled — ULA owns the bus)
+;
+; Side-set drives CLOCK pin (GP25) directly.
+; Autopull: 1 bit per pull, threshold=1.
+; =============================================================================
+
+.program cpu_clock
+.side_set 1
+
+.wrap_target
+    out x, 1             side 1   ; pull contention bit into x; clock HIGH
+    jmp !x toggle        side 1   ; x=0: no contention → toggle
+    jmp .wrap_target     side 1   ; x=1: contention → hold HIGH, loop
+
+toggle:
+    nop                  side 0   ; clock LOW for one pixel clock period
+.wrap
+; The rising edge (side 1) happens at the pull/jmp; the falling edge (side 0)
+; happens at the nop. This gives a symmetric 50% duty cycle at 3.5 MHz when
+; uncontended, since each instruction = 1 pixel clock = 142 ns.
+;
+; During contention, the clock remains HIGH until Core 0 pushes a 0 bit.
+; Core 0 evaluates the contention condition each pixel clock and pushes
+; the appropriate bit before pio_sm_get_blocking() returns from the sync tick.

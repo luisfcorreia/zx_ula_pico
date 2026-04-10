@@ -1,0 +1,47 @@
+; =============================================================================
+; pixel.pio — RGBi pixel output shift register
+; PIO0 SM1, running at 7 MHz (same divider as sync SM)
+;
+; Core 0 pushes one byte per 8-pixel group into the TX FIFO.
+; Each bit represents the mono pixel value for one pixel clock.
+;
+; The RGBi colour is applied by Core 0 writing the colour GPIO levels
+; directly to GPIO (via gpio_put_masked) for each pixel. The PIO SM here
+; drives only the shift-register timing — it clocks out 1 bit per pixel
+; clock and asserts or deasserts the R, G, B pins based on that bit XOR'd
+; with the paper/ink colour selection.
+;
+; In practice Core 0 pre-computes a full 8-bit "ink mask" and "paper mask"
+; for each 8-pixel group and pushes the correct colour GPIO values directly.
+; This SM is therefore used primarily as a timing reference — it provides
+; the pixel-rate clock tick via the autopull mechanism.
+;
+; For a simpler implementation: Core 0 drives all RGBi pins via
+; gpio_put_masked() each pixel clock (36 sys cycles is enough time)
+; and this SM is not strictly needed. It is retained for future use
+; as a DMA-fed high-speed pixel output if performance tuning requires it.
+;
+; Autopull configuration:
+;   shift left, threshold = 8, autopull enabled
+;   → SM stalls when OSR empty until Core 0 pushes next byte
+; =============================================================================
+
+.program pixel_shift
+
+.wrap_target
+    out pins, 1          ; shift 1 bit out to GP45 (R pin); 1 = ink, 0 = paper
+                         ; NOTE: this drives only R; G and B set by Core 0
+                         ; gpio_put_masked() call which runs in the same cycle
+.wrap
+
+; =============================================================================
+; Minimal program — relies on Core 0 handling colour selection.
+; Core 0 loop body per pixel:
+;   1. pio_sm_get_blocking(pio0, SM_SYNC)  — wait for pixel tick
+;   2. Shift pixel bit from SRegister
+;   3. Look up colour index → yn/uo/vo/r/g/b
+;   4. gpio_put_masked() — write all video outputs in one 32-bit write
+;   5. Push /INT command to SM0 TX FIFO
+;   6. Push contention bit to SM3 TX FIFO
+;   7. Advance hc/vc
+; =============================================================================
