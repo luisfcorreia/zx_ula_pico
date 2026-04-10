@@ -15,9 +15,8 @@ Replace the Ferranti 6C001E-7 ULA chip in an unmodified ZX Spectrum 48K PCB with
 * YUV lookup tables — 16 entries, indexed by {BRIGHT,G,R,B}, values pending oscilloscope measurement on real 6C001E-7
 
 ## Architecture
-|-|-|-|
+
 |Block|Resource|Responsibility|
-|-|-|-|
 |Core 0|ARM Cortex-M33|Raster loop, runs forever, one iteration per pixel clock (36 sys cycles budget)|
 |Core 1|ARM Cortex-M33|Port 0xFE read/write, border colour, sound, flash counter, keyboard|
 |PIO0 SM0|7 MHz|Sync generator (HSync, VSync, /INT)|
@@ -27,7 +26,7 @@ Replace the Ferranti 6C001E-7 ULA chip in an unmodified ZX Spectrum 48K PCB with
 |PIO1 SM0|252 MHz|DRAM controller (RAS/CAS/WE, 4 ns resolution)|
 |PIO1 SM1|252 MHz|D bus capture (DataLatch/AttrLatch timing)|
 |PIO1 SM2|252 MHz|RAS-only refresh cycles|
-|-|-|-|
+
 
 
 ## GPIO pin map
