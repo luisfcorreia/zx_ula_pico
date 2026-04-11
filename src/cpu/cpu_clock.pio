@@ -1,34 +1,33 @@
 ; =============================================================================
-; cpu_clock.pio — contention-gated 3.5 MHz CPU clock output
-; PIO0 SM3, running at 7 MHz (PIO0_CLK_DIV = 36)
+; cpu_clock.pio — contention-gated 3.5 MHz CPU clock, DMA-fed bitstream
+; PIO0 SM3, running at 7 MHz (PIO0_CLK_DIV = 36 from 252 MHz)
 ;
-; Each iteration = 1 pixel clock (142 ns). The SM toggles CLOCK at half
-; the PIO clock rate (one toggle per instruction → 3.5 MHz square wave)
-; unless contention is active, in which case it holds CLOCK HIGH.
+; REDESIGN FOR DMA:
+;   The original design had Core 0 pushing one contention bit per pixel clock
+;   via pio_sm_put(), requiring tight per-pixel loop coupling.
 ;
-; Core 0 pushes one contention bit per pixel clock into the TX FIFO:
-;   0 → free to toggle (normal 3.5 MHz operation)
-;   1 → hold HIGH (CPU stalled — ULA owns the bus)
+;   This version precomputes the entire clock waveform for a scanline in C:
+;   - Normal pixels: alternating 1, 0, 1, 0 ... (3.5 MHz square wave)
+;   - Contended pixels: 1, 1, 1, 1 ... (clock held HIGH)
+;   One bit per pixel clock, packed MSB-first into uint32_t words.
 ;
-; Side-set drives CLOCK pin (GP25) directly.
-; Autopull: 1 bit per pull, threshold=1.
+;   DMA feeds the precomputed buffer into TX FIFO, paced by DREQ.
+;   Autopull threshold = 32. SM outputs one bit per cycle at 7 MHz.
+;
+;   Contention pattern for ZX Spectrum 48K is deterministic per scanline
+;   position and can be fully precomputed — no runtime decisions needed.
+;
+; Program is one instruction — minimum latency, deterministic timing.
 ; =============================================================================
 
 .program cpu_clock
-.side_set 1
 
 .wrap_target
-    out x, 1             side 1   ; pull contention bit into x; clock HIGH
-    jmp !x toggle        side 1   ; x=0: no contention → toggle
-    jmp .wrap_target     side 1   ; x=1: contention → hold HIGH, loop
-
-toggle:
-    nop                  side 0   ; clock LOW for one pixel clock period
+    out pins, 1         ; 1 pixel clock: shift 1 clock bit onto CLOCK pin
+                        ; autopull refills OSR from TX FIFO when exhausted
 .wrap
-; The rising edge (side 1) happens at the pull/jmp; the falling edge (side 0)
-; happens at the nop. This gives a symmetric 50% duty cycle at 3.5 MHz when
-; uncontended, since each instruction = 1 pixel clock = 142 ns.
-;
-; During contention, the clock remains HIGH until Core 0 pushes a 0 bit.
-; Core 0 evaluates the contention condition each pixel clock and pushes
-; the appropriate bit before pio_sm_get_blocking() returns from the sync tick.
+
+; SM config (set in C):
+;   sm_config_set_out_pins(&c, PIN_CLOCK, 1);
+;   sm_config_set_out_shift(&c, false, true, 32);  // shift left, autopull, threshold=32
+;   sm_config_set_clkdiv(&c, 36.0f);               // 7 MHz from 252 MHz

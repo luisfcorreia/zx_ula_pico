@@ -23,16 +23,28 @@
 ; PIO1 SM1 waits on IRQ 4 then fires CPU IRQ 0 → Core 0 captures D bus.
 ; =============================================================================
 
-.define RAS_N    0b001
-.define CAS_N    0b010
-.define WE_N     0b100
-.define ALL_N    0b111
+; Individual signal bits (active-low, 3-bit SET pins field)
+; FIX: pioasm does not support 0b binary literals; use decimal equivalents.
+.define RAS_N    1   ; 0b001
+.define CAS_N    2   ; 0b010
+.define WE_N     4   ; 0b100
+.define ALL_N    7   ; 0b111  — all deasserted (safe idle)
+
+; Pre-computed pin states for set instructions.
+; FIX: pioasm does not reliably evaluate bitwise NOT expressions (~) in
+; instruction operands; compute them here as named constants instead.
+;   RAS_ASSERT  = ALL_N & ~RAS_N              = 7 & ~1 = 6  (0b110)
+;   CAS_ASSERT  = ALL_N & ~RAS_N & ~CAS_N     = 7 & ~1 & ~2 = 4  (0b100)
+;   ALL_ASSERT  = ALL_N & ~RAS_N & ~CAS_N & ~WE_N = 0  (0b000)
+.define RAS_ASSERT   6   ; /RAS low,  /CAS high, /WE high
+.define CAS_ASSERT   4   ; /RAS low,  /CAS low,  /WE high
+.define ALL_ASSERT   0   ; /RAS low,  /CAS low,  /WE low
 
 .program dram_ctrl
 
 idle:
     set pins, ALL_N             ; /RAS /CAS /WE all deasserted (safe idle)
-    pull block                  ; wait for command from Core 0
+    ; (autopull: SM stalls at first `out` below when TX FIFO empty — no pull needed)
 
     out x, 2                    ; op[1:0]
     jmp x-- not_idle            ; x≥1: not idle
@@ -42,12 +54,12 @@ not_idle:
     jmp x-- not_cpu             ; x≥1 after decrement: not CPU
     ; ---- op=1: CPU cycle ---------------------------------------------------
     out y, 1                    ; y = wr bit [29]
-    out null, 7                 ; discard col [28:22] (CPU addr from ext mux)
-    out null, 7                 ; discard row [21:15]
-    set pins, (ALL_N & ~RAS_N) [36]  ; /RAS low, hold 37+1=38 cycles (tRAS)
-    set pins, (ALL_N & ~RAS_N & ~CAS_N) [17]  ; /CAS low, /RAS held, 18+1=19 cy
+    out null, 14                ; discard col [28:22] + row [21:15] (CPU addr from ext mux)
+    set pins, RAS_ASSERT [31]   ; /RAS low — 32 cycles...
+    nop              [5]        ; ...+6 = 38 cycles total (tRAS ≥ 150 ns ✓)
+    set pins, CAS_ASSERT [17]   ; /CAS low, /RAS held, 18+1=19 cycles
     jmp !y cpu_rd               ; y=0: read cycle
-    set pins, (ALL_N & ~RAS_N & ~CAS_N & ~WE_N) [2]  ; /WE low for write
+    set pins, ALL_ASSERT [2]    ; /WE low for write
 cpu_rd:
     set pins, ALL_N [24]        ; release all, precharge 25 cycles
     jmp idle
@@ -60,13 +72,13 @@ not_cpu:
     out x, 7                    ; x = row address [21:15] (hold in x)
     ; Present row address then assert /RAS
     ; (row addr must be stable before /RAS falls: guaranteed by OUT above)
-    set pins, (ALL_N & ~RAS_N)  ; /RAS falls — row latched by DRAM
+    set pins, RAS_ASSERT        ; /RAS falls — row latched by DRAM
     ; Switch to column address while /RAS is held
     mov pins, x         [3]     ; RA[6:0] = row→col (x holds row; re-use col from OUT)
     ; Note: col was already in OUT register before row — swap: OUT col first,
     ; then hold row in X. Revised approach below is cleaner:
     ; /CAS falls while /RAS still held → tRCD = 0 ns
-    set pins, (ALL_N & ~RAS_N & ~CAS_N) [17]  ; /CAS hold 19 cycles
+    set pins, CAS_ASSERT [17]   ; /CAS hold 19 cycles
     ; Signal to SM1 (D-bus capture) that data is valid
     irq 4               [0]     ; fire IRQ4 → SM1 triggers CPU IRQ
     ; Hold /CAS one more cycle while IRQ propagates
@@ -78,6 +90,7 @@ not_ula:
     out null, 1                 ; discard wr
     out null, 7                 ; discard col
     out pins, 7                 ; RA[6:0] = refresh row address [21:15]
-    set pins, (ALL_N & ~RAS_N) [36]  ; /RAS low 38 cycles (no /CAS)
+    set pins, RAS_ASSERT [31]   ; /RAS low — 32 cycles...
+    nop              [5]        ; ...+6 = 38 cycles total (tRAS ≥ 150 ns ✓)
     set pins, ALL_N [24]        ; /RAS high, precharge
     jmp idle

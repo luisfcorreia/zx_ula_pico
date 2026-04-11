@@ -23,5 +23,6 @@ void dram_cmd_refresh(uint8_t row);
 // Single-writer (IRQ on Core 0), so no mutex needed.
 extern volatile uint8_t dram_bitmap_reg;  // last pixel byte from DRAM
 extern volatile uint8_t dram_attr_reg;    // last attribute byte from DRAM
+extern volatile uint8_t dram_fetch_phase; // no idea of what this does
 extern volatile bool     dram_bitmap_ready;
 extern volatile bool     dram_attr_ready;

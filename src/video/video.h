@@ -9,4 +9,4 @@ void video_init(void);
 // Runs one iteration per pixel clock (36 system cycles at 252 MHz).
 // Owns: hc/vc counters, pixel pipeline, DRAM command dispatch,
 //       YUV DAC writes, RGBi GPIO writes, /INT, /ROM_CS, contention bit.
-[[noreturn]] void video_raster_loop(void);
+[[noreturn]] void video_scanline_loop(void);

@@ -1,8 +1,12 @@
 # ZX Spectrum 48K ULA — RP2350B Drop-in Replacement
 
-Project goal
+## Project goal
 
-Replace the Ferranti 6C001E-7 ULA chip in an unmodified ZX Spectrum 48K PCB with an RP2350B. The Pico boots before the Z80 gets a clock (ULA drives Z80 clock, so no clock until Pico is ready). RP2350B is 5V tolerant — no level shifting needed. Target 252 MHz overclock.
+Replace the Ferranti 6C001E-7 ULA chip in an unmodified ZX Spectrum 48K PCB with an RP2350B. 
+
+The Pico boots before the Z80 gets a clock (ULA drives Z80 clock, so no clock until Pico is ready). 
+
+RP2350B is 5V tolerant — no level shifting needed. Target 252 MHz overclock with no voltage increase planned.
 
 ## Hardware facts established
 

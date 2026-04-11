@@ -43,13 +43,13 @@
 // U Cb (GP37) — 1-bit sign placeholder until oscilloscope calibration.
 // 0=negative Cb (green/red dominant), 1=positive Cb (blue dominant) or neutral.
 // Expand to 4-bit (GP37–GP40) once scope measurements are available.
-#define PIN_UO          37
+#define PIN_UO_BASE     37
 #define PIN_UO_COUNT    1
 
 // V Cr (GP38) — 1-bit sign placeholder until oscilloscope calibration.
 // 0=negative Cr (green/blue dominant), 1=positive Cr (red dominant) or neutral.
 // Expand to 4-bit (GP38–GP41) once scope measurements are available.
-#define PIN_VO          38
+#define PIN_VO_BASE     38
 #define PIN_VO_COUNT    1
 
 // RGBi outputs (GP39–GP42) — all four bits present for prototype testing.
