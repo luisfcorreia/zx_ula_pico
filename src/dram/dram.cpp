@@ -27,6 +27,7 @@
 
 #include "dram.h"
 #include "pinmap.h"
+#include "ula/ula_dma.h"
 #include "hardware/pio.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
@@ -41,26 +42,71 @@ volatile bool    dram_bitmap_ready = false;
 volatile bool    dram_attr_ready   = false;
 volatile uint8_t dram_fetch_phase  = 0;
 
-#define SM_DRAM_CTRL    0
-#define SM_DBUS_CAP     1
-#define SM_REFRESH      2
+// ---------------------------------------------------------------------------
+// Shadow video RAM (6912 bytes)
+// Indexed identically to bitmap_addr() / attr_addr() in ula_dma.h.
+// Single-writer: D-bus capture IRQ on Core 0.
+// ---------------------------------------------------------------------------
+volatile uint8_t shadow_vram[SHADOW_VRAM_SIZE];
 
-// ---- D-bus capture IRQ (unchanged) --------------------------------------
+// Capture state — written only from IRQ context.
+// cap_active : non-active lines (refresh-only) suppress all writes.
+// cap_col    : byte column 0-31 within the current screen line.
+// cap_phase  : 0 = expecting bitmap byte, 1 = expecting attr byte.
+static volatile bool    cap_active = false;
+static volatile int     cap_line   = 0;
+static volatile uint8_t cap_col    = 0;
+static volatile uint8_t cap_phase  = 0;   // 0=bitmap, 1=attr
+
+// ---- D-bus capture IRQ --------------------------------------------------
 static void __isr dram_capture_irq_handler_internal(void) {
-    pio1->irq = (1u << 0);
-    uint8_t data = (uint8_t)((gpio_get_all() >> PIN_D_BASE) & 0xFF);
-    if (dram_fetch_phase == 0) {
-        dram_bitmap_reg   = data;
-        dram_bitmap_ready = true;
+    pio1->irq = (1u << 0);   // clear PIO1 IRQ 0
+
+    if (!cap_active) return;
+
+    uint8_t data = (uint8_t)((gpio_get_all() >> PIN_D_BASE) & 0xFFu);
+
+    if (cap_phase == 0) {
+        // Bitmap byte — store using the scrambled ZX address
+        uint16_t off = (uint16_t)(
+            ((cap_line & 0xC0u) << 5) |
+            ((cap_line & 0x07u) << 8) |
+            ((cap_line & 0x38u) << 2) |
+            (cap_col & 0x1Fu)
+        );
+        shadow_vram[off] = data;
+        cap_phase = 1;
     } else {
-        dram_attr_reg   = data;
-        dram_attr_ready = true;
+        // Attribute byte
+        uint16_t off = (uint16_t)(0x1800u | ((cap_line >> 3) << 5) | (cap_col & 0x1Fu));
+        shadow_vram[off] = data;
+        cap_phase = 0;
+        if (++cap_col >= 32u) cap_col = 0;  // safety clamp
     }
 }
 
 void dram_capture_irq_handler(void) {
     dram_capture_irq_handler_internal();
 }
+
+// ---- dram_begin_line ----------------------------------------------------
+// Called by ula_dma_irq_handler at the start of each scanline's DMA.
+// Arms or disarms the shadow-VRAM capture state for the incoming line.
+void dram_begin_line(int line) {
+    if (line >= 0 && line < ACTIVE_LINES) {
+        cap_line   = line;
+        cap_col    = 0;
+        cap_phase  = 0;
+        cap_active = true;
+    } else {
+        cap_active = false;
+    }
+}
+
+// ---- Public init --------------------------------------------------------
+#define SM_DRAM_CTRL    0
+#define SM_DBUS_CAP     1
+#define SM_REFRESH      2
 
 // ---- Public init --------------------------------------------------------
 void dram_init(void) {

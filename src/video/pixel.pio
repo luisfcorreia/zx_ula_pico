@@ -22,8 +22,9 @@
 ; as a DMA-fed high-speed pixel output if performance tuning requires it.
 ;
 ; Autopull configuration:
-;   shift left, threshold = 8, autopull enabled
-;   → SM stalls when OSR empty until Core 0 pushes next byte
+;   shift left, threshold = 32, autopull enabled
+;   → SM stalls when OSR empty until DMA pushes next 32-bit word
+;   One word covers 32 pixel clocks (one full scanline word of pixel data).
 ; =============================================================================
 
 .program pixel_shift

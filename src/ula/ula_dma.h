@@ -1,19 +1,6 @@
 #pragma once
 // =============================================================================
 // ula_dma.h — DMA setup for ZX ULA PIO state machines
-//
-// Four DMA channels, one per SM TX FIFO:
-//   CH_DMA_SYNC     → PIO0 SM0 (sync_gen)    — /INT bitstream
-//   CH_DMA_PIXEL    → PIO0 SM1 (pixel_shift)  — pixel bitstream
-//   CH_DMA_CLOCK    → PIO0 SM3 (cpu_clock)    — clock/contention bitstream
-//   CH_DMA_DRAM     → PIO1 SM0 (dram_ctrl)    — command word stream
-//
-// Each channel is paced by its SM's TX DREQ so it only advances when the
-// SM has consumed the previous word — no busy-waiting, no overflow.
-//
-// Scanline buffers are double-buffered: while DMA plays buffer A into the
-// SMs, Core 0 fills buffer B for the next scanline. When DMA raises its
-// completion IRQ, Core 0 swaps the pointers and restarts.
 // =============================================================================
 
 #ifndef ULA_DMA_H
@@ -23,30 +10,26 @@
 #include "hardware/pio.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"
+#include "hardware/structs/sio.h"
+#include "hardware/address_mapped.h"
+#include "pinmap.h"
+
+// gpio_put_masked_hi was added to the SDK specifically for RP2350 and may
+// not be present in all SDK builds. Use hw_write_masked on gpio_hi_out directly.
+static inline void ula_gpio_put_hi(uint32_t mask, uint32_t value) {
+    hw_write_masked(&sio_hw->gpio_hi_out, value, mask);
+}
 
 // ---------------------------------------------------------------------------
 // ZX Spectrum 48K timing constants
 // ---------------------------------------------------------------------------
 
-#define PIXELS_PER_LINE     456     // total pixel clocks per scanline (border + active + blanking)
-#define TOTAL_LINES         312     // total scanlines per frame (PAL)
-#define ACTIVE_LINES        192     // visible screen lines
-#define ACTIVE_PIXELS       256     // visible pixels per line
-
-// Words needed per scanline (ceil(PIXELS_PER_LINE / 32))
+#define PIXELS_PER_LINE     456
+#define TOTAL_LINES         312
+#define ACTIVE_LINES        192
+#define ACTIVE_PIXELS       256
 #define WORDS_PER_LINE      ((PIXELS_PER_LINE + 31) / 32)   // = 15
-
-// Max DRAM command words per scanline:
-//   8 ULA reads (one per 8-pixel group in active area) + 1 CPU + 1 refresh
-#define MAX_DRAM_CMDS_PER_LINE  16
-
-// ---------------------------------------------------------------------------
-// Pin assignments (must match PIO program sm_config_set_out_pins calls)
-// ---------------------------------------------------------------------------
-
-#define PIN_INT_N       24
-#define PIN_CLOCK       25
-#define PIN_PIXEL_R     26      // pixel SM drives R; G/B set by gpio_put_masked
+#define MAX_DRAM_CMDS_PER_LINE  66
 
 // ---------------------------------------------------------------------------
 // PIO / SM assignments
@@ -61,34 +44,85 @@
 #define SM_DRAM         0
 
 // ---------------------------------------------------------------------------
-// Scanline buffer layout (double-buffered, ping-pong between A and B)
+// VIDEO_GPIO_HI_MASK — all video output pins in RP2350 high GPIO bank
+// All video output pins are GP33-GP44. Bit positions relative to GP32.
 // ---------------------------------------------------------------------------
+#define VIDEO_GPIO_HI_BASE  32u
+#define VIDEO_GPIO_HI_MASK ( \
+    (0xFu << (PIN_YN_BASE  - VIDEO_GPIO_HI_BASE)) | \
+    (1u   << (PIN_UO_BASE  - VIDEO_GPIO_HI_BASE)) | \
+    (1u   << (PIN_VO_BASE  - VIDEO_GPIO_HI_BASE)) | \
+    (1u   << (PIN_R        - VIDEO_GPIO_HI_BASE)) | \
+    (1u   << (PIN_G        - VIDEO_GPIO_HI_BASE)) | \
+    (1u   << (PIN_B        - VIDEO_GPIO_HI_BASE)) | \
+    (1u   << (PIN_BRIGHT   - VIDEO_GPIO_HI_BASE)) | \
+    (1u   << (PIN_HSYNC_N  - VIDEO_GPIO_HI_BASE)) | \
+    (1u   << (PIN_VSYNC_N  - VIDEO_GPIO_HI_BASE)) )
 
+// ---------------------------------------------------------------------------
+// ZX video address helpers (screen-relative coordinates)
+// vc = screen line 0..191, hc = screen pixel column 0..255
+// Returns offset into shadow_vram[].
+// Physical DRAM: row = (addr >> 7) & 0x7F, col = addr & 0x7F
+// ---------------------------------------------------------------------------
+static inline uint16_t bitmap_addr(uint16_t vc, uint16_t hc) {
+    return (uint16_t)(
+        ((vc & 0xC0u) << 5) |
+        ((vc & 0x07u) << 8) |
+        ((vc & 0x38u) << 2) |
+        ((hc >> 3) & 0x1Fu)
+    );
+}
+static inline uint16_t attr_addr(uint16_t vc, uint16_t hc) {
+    return (uint16_t)(0x1800u | ((vc >> 3) << 5) | ((hc >> 3) & 0x1Fu));
+}
+
+// ---------------------------------------------------------------------------
+// GPIO HI word builders
+// ---------------------------------------------------------------------------
+#include "colour_lut.h"
+
+// lut_idx = 4-bit ZX colour index {BRIGHT[3], G[2], R[1], B[0]}
+static inline uint32_t colour_gpio_hi(uint8_t lut_idx, bool hsync_n, bool vsync_n) {
+    return ((uint32_t)lut_yn(lut_idx)      << (PIN_YN_BASE  - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)lut_uo(lut_idx)      << (PIN_UO_BASE  - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)lut_vo(lut_idx)      << (PIN_VO_BASE  - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)((lut_idx >> 1) & 1) << (PIN_R        - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)((lut_idx >> 2) & 1) << (PIN_G        - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)((lut_idx >> 0) & 1) << (PIN_B        - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)((lut_idx >> 3) & 1) << (PIN_BRIGHT   - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)hsync_n              << (PIN_HSYNC_N  - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)vsync_n              << (PIN_VSYNC_N  - VIDEO_GPIO_HI_BASE));
+}
+
+static inline uint32_t sync_gpio_hi(bool hsync_n, bool vsync_n) {
+    return ((uint32_t)YN_SYNC_TIP << (PIN_YN_BASE  - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)UO_NEUTRAL  << (PIN_UO_BASE  - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)VO_NEUTRAL  << (PIN_VO_BASE  - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)hsync_n     << (PIN_HSYNC_N  - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)vsync_n     << (PIN_VSYNC_N  - VIDEO_GPIO_HI_BASE));
+}
+
+// ---------------------------------------------------------------------------
+// Scanline buffer (double-buffered ping-pong)
+// ---------------------------------------------------------------------------
 typedef struct {
-    // /INT bitstream: 1 bit per pixel clock, MSB first
-    // bit=1 → /INT high (deasserted), bit=0 → /INT low (asserted)
     uint32_t int_n[WORDS_PER_LINE];
-
-    // CPU clock + contention bitstream: 1 bit per pixel clock, MSB first
-    // Normal: alternating 1,0,1,0 (3.5 MHz square wave)
-    // Contended pixels: consecutive 1s (clock held HIGH)
     uint32_t clock[WORDS_PER_LINE];
-
-    // Pixel bitstream: 1 bit per pixel clock, MSB first
-    // bit=1 → ink colour, bit=0 → paper colour (Core 0 applies colour via GPIO)
     uint32_t pixel[WORDS_PER_LINE];
-
-    // DRAM command words (variable count per line, padded with idle op=0)
     uint32_t dram_cmds[MAX_DRAM_CMDS_PER_LINE];
     uint32_t dram_cmd_count;
+    uint32_t colour_out[PIXELS_PER_LINE];
 } ScanlineBuffer;
 
-// Two scanline buffers for ping-pong DMA
 extern ScanlineBuffer scanline_buf[2];
 
 // ---------------------------------------------------------------------------
-// DMA channel handles (assigned by ula_dma_init)
+// Shared state
 // ---------------------------------------------------------------------------
+extern volatile bool scanline_ready;
+extern volatile int  active_buf;
+extern volatile int  current_line;
 
 extern int ch_sync;
 extern int ch_pixel;
@@ -98,25 +132,9 @@ extern int ch_dram;
 // ---------------------------------------------------------------------------
 // API
 // ---------------------------------------------------------------------------
-
-// Initialise all four PIO state machines and their DMA channels.
-// Call once at startup after PIO programs have been loaded.
 void ula_dma_init(void);
-
-// Start DMA playback of scanline buffer |buf_idx| (0 or 1) on all four channels.
-// Typically called from the DMA completion IRQ handler after the next buffer
-// has been precomputed.
 void ula_dma_start(int buf_idx);
-
-// Precompute the int_n, clock and pixel bitstreams for |line| (0..TOTAL_LINES-1)
-// into scanline_buf[buf_idx]. Also fills dram_cmds.
-// Call this on Core 0 while DMA is playing the other buffer.
 void ula_scanline_prepare(int buf_idx, int line);
-
-// DMA completion IRQ handler — swap buffers, kick off next scanline DMA,
-// then precompute the following scanline. Install with:
-//   irq_set_exclusive_handler(DMA_IRQ_0, ula_dma_irq_handler);
-//   irq_set_enabled(DMA_IRQ_0, true);
 void ula_dma_irq_handler(void);
 
 #endif // ULA_DMA_H

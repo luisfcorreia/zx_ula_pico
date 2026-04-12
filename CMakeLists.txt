@@ -3,6 +3,13 @@ cmake_minimum_required(VERSION 3.13)
 set(PICO_PLATFORM rp2350-arm-s)
 set(PICO_BOARD weact_studio_rp2350b_core)
 
+### Project magic sprinkles
+set(PROJECT_NAME zxULApico)
+set(PROJECT_MANUFACTURER "luiscorreia.pt")
+set(PRODUCT_STRING "ZXULApico")
+string(TIMESTAMP MAGIC_SMOKE "%Y%m%d")  # Auto generate dated version
+set(PROJECT_VERSION "0.0.1-${MAGIC_SMOKE}")  # Generate compile version
+
 include(pico-sdk/pico_sdk_init.cmake)
 
 project(zx_pico_ula C CXX ASM)
@@ -40,6 +47,13 @@ target_link_libraries(zx_ula_pico
     hardware_clocks
     hardware_gpio
     hardware_pwm
+)
+
+# Custom 252 MHz PLL: VCO=1512 MHz, POSTDIV1=6, POSTDIV2=1
+target_compile_definitions(zx_ula_pico PRIVATE
+    PLL_SYS_VCO_FREQ_HZ=1512000000
+    PLL_SYS_POSTDIV1=6
+    PLL_SYS_POSTDIV2=1
 )
 
 # No USB/UART stdio — all GPIO needed for the ULA interface

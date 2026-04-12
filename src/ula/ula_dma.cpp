@@ -3,6 +3,7 @@
 // =============================================================================
 
 #include "ula_dma.h"
+#include "dram/dram.h"
 #include "hardware/pio.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"
@@ -22,10 +23,9 @@ int ch_clock;
 int ch_dram;
 
 // Active buffer index (the one currently being played by DMA)
-static volatile int active_buf = 0;
-
-// Current scanline being rendered
-static volatile int current_line = 0;
+volatile bool scanline_ready = false;
+volatile int  active_buf     = 0;
+volatile int  current_line   = 0;
 
 // ---------------------------------------------------------------------------
 // ZX Spectrum 48K /INT timing
@@ -56,63 +56,146 @@ static bool clock_high_at(int line, int pixel_col) {
     return (pixel_col % 2) == 0;
 }
 
+// External state read by colour_out computation
+extern volatile uint8_t border_colour;
+extern volatile uint8_t flash_cnt;
+
+// Active display horizontal extent (pixel clocks within total scanline)
+#define ACTIVE_START    64              // first active pixel clock
+#define ACTIVE_END      (ACTIVE_START + ACTIVE_PIXELS)  // 320
+
 // ---------------------------------------------------------------------------
-// ula_scanline_prepare — build all three bitstreams + DRAM command list
+// ula_scanline_prepare — build bitstreams, DRAM commands, and colour_out[]
 // ---------------------------------------------------------------------------
 
 void ula_scanline_prepare(int buf_idx, int line) {
     ScanlineBuffer *buf = &scanline_buf[buf_idx];
     memset(buf, 0, sizeof(*buf));
 
-    // Build int_n, clock and pixel bitstreams pixel by pixel
-    for (int px = 0; px < PIXELS_PER_LINE; px++) {
-        int word  = px / 32;
-        int bit   = 31 - (px % 32);   // MSB first → bit 31 = pixel 0
+    // ------------------------------------------------------------------
+    // Determine per-scanline vertical sync state (constant across the line)
+    // ------------------------------------------------------------------
+    bool in_vblank = (line >= VBLANK_START && line <= VBLANK_END);
+    bool in_vsync  = (line >= VSYNC_START  && line <= VSYNC_END);
 
-        // /INT bitstream
+    // Local snapshot of shared state (avoid re-reading volatile each pixel)
+    uint8_t bc         = border_colour;
+    uint8_t flash      = flash_cnt;
+
+    // ------------------------------------------------------------------
+    // Per-pixel loop: fill int_n[], clock[], pixel[], and colour_out[]
+    // ------------------------------------------------------------------
+    for (int px = 0; px < PIXELS_PER_LINE; px++) {
+        int word = px / 32;
+        int bit  = 31 - (px % 32);     // MSB first → bit 31 = pixel 0
+
+        // -- /INT bitstream -----------------------------------------------
         if (!int_n_active_at(line, px))
             buf->int_n[word] |= (1u << bit);    // 1 = deasserted
 
-        // Clock bitstream
+        // -- Clock bitstream ----------------------------------------------
         if (clock_high_at(line, px))
             buf->clock[word] |= (1u << bit);
 
-        // Pixel bitstream (active display area only)
-        if (line < ACTIVE_LINES && px >= 64 && px < 64 + ACTIVE_PIXELS) {
-            int screen_col = px - 64;
-            // Fetch pixel from ZX Spectrum video RAM (caller should pass pointer;
-            // simplified here as a direct memory read from a fixed base address)
-            // pixel_data would typically come from a pointer argument in real code.
-            // Placeholder: leave bit 0 (all paper colour) for now.
-            (void)screen_col;
+        // -- Sync and blanking flags for this pixel ------------------------
+        bool in_hblank = (px >= HBLANK_START && px <= HBLANK_END);
+        bool in_hsync  = (px >= HSYNC_START  && px <= HSYNC_END);
+        bool hsync_n   = !in_hsync;
+        bool vsync_n   = !in_vsync;
+
+        // -- colour_out[] -------------------------------------------------
+        uint32_t gpio_word;
+
+        if (px >= PIXELS_PER_LINE - 1 || px > HC_MAX) {
+            // Padding pixels beyond HC_MAX — output black, syncs deasserted
+            gpio_word = colour_gpio_hi(0, true, true);
+
+        } else if (in_hsync || in_vsync) {
+            // Sync tip (composite: bring signal to lowest level)
+            gpio_word = sync_gpio_hi(hsync_n, vsync_n);
+
+        } else if (in_hblank || in_vblank) {
+            // Non-sync blanking — black pedestal, syncs deasserted
+            gpio_word = colour_gpio_hi(0, true, true);
+
+        } else if (line < ACTIVE_LINES && px >= ACTIVE_START && px < ACTIVE_END) {
+            // Active display area — look up from shadow video RAM
+            int screen_col = px - ACTIVE_START;     // 0..255
+
+            uint16_t bmp_off = bitmap_addr((uint16_t)line, (uint16_t)screen_col);
+            uint16_t atr_off = attr_addr  ((uint16_t)line, (uint16_t)screen_col);
+
+            uint8_t bitmap_byte = shadow_vram[bmp_off];
+            uint8_t attr_byte   = shadow_vram[atr_off];
+
+            uint8_t bright = (attr_byte >> 6) & 1u;
+            uint8_t paper  = (uint8_t)((bright << 3) | ((attr_byte >> 3) & 7u));
+            uint8_t ink    = (uint8_t)((bright << 3) | (attr_byte & 7u));
+
+            // Flash: swap ink/paper every 16 frames when FLASH attribute set
+            if ((attr_byte & 0x80u) && (flash & 0x10u)) {
+                uint8_t tmp = ink; ink = paper; paper = tmp;
+            }
+
+            // Pixel bit: MSB of the byte group is the leftmost pixel
+            int bit_pos = 7 - (screen_col & 7);
+            bool pixel_on = (bitmap_byte >> bit_pos) & 1u;
+
+            gpio_word = colour_gpio_hi(pixel_on ? ink : paper, true, true);
+
+        } else {
+            // Border — use border colour, pass through sync signals
+            gpio_word = colour_gpio_hi(bc, hsync_n, vsync_n);
+        }
+
+        buf->colour_out[px] = gpio_word;
+
+        // -- Pixel bitstream (for PIO SM1 — drives R pin from shadow data) --
+        if (line < ACTIVE_LINES && px >= ACTIVE_START && px < ACTIVE_END) {
+            int screen_col = px - ACTIVE_START;
+            uint16_t bmp_off   = bitmap_addr((uint16_t)line, (uint16_t)screen_col);
+            uint8_t  bmp_byte  = shadow_vram[bmp_off];
+            int      bit_pos   = 7 - (screen_col & 7);
+            if ((bmp_byte >> bit_pos) & 1u)
+                buf->pixel[word] |= (1u << bit);
         }
     }
 
-    // Build DRAM command list for this scanline
+    // ------------------------------------------------------------------
+    // DRAM command list
+    //
+    // For active lines: 32 interleaved (bitmap, attr) pairs = 64 ULA reads.
+    // Physical DRAM addresses derived from ZX video address formulas.
+    // The D-bus capture IRQ expects this exact (bitmap, attr) interleaving
+    // so it can index shadow_vram correctly via cap_phase.
+    //
+    // For all lines: one RAS-only refresh using the scanline number as the
+    // refresh row address (covers all 128 rows over two frames @ 50 Hz).
+    // ------------------------------------------------------------------
     uint32_t *cmds = buf->dram_cmds;
     uint32_t  n    = 0;
 
     if (line < ACTIVE_LINES) {
-        // 8 ULA reads: one per 8-pixel group in the active area
-        // Column address = group index, row address = screen line
-        for (int grp = 0; grp < 8; grp++) {
-            uint8_t col = (uint8_t)grp;
-            uint8_t row = (uint8_t)(line & 0x7F);
-            // Command word: op=10 (ULA read), wr=0
-            // [31:30]=op, [29]=wr, [28:22]=col, [21:15]=row, [14:0]=0
-            cmds[n++] = (0b10u << 30) | (col << 22) | (row << 15);
+        for (int col = 0; col < 32; col++) {
+            uint16_t bmp = bitmap_addr((uint16_t)line, (uint16_t)(col << 3));
+            uint16_t atr = attr_addr  ((uint16_t)line, (uint16_t)(col << 3));
+
+            uint8_t bmp_row = (uint8_t)((bmp >> 7) & 0x7Fu);
+            uint8_t bmp_col = (uint8_t)(bmp & 0x7Fu);
+            uint8_t atr_row = (uint8_t)((atr >> 7) & 0x7Fu);
+            uint8_t atr_col = (uint8_t)(atr & 0x7Fu);
+
+            cmds[n++] = dram_cmd_ula_read(bmp_row, bmp_col);   // bitmap
+            cmds[n++] = dram_cmd_ula_read(atr_row, atr_col);   // attr
         }
     }
 
-    // RAS-only refresh every scanline (op=11)
-    {
-        uint8_t refresh_row = (uint8_t)(line & 0x7F);
-        cmds[n++] = (0b11u << 30) | (refresh_row << 15);
-    }
+    // RAS-only refresh (op=11)
+    cmds[n++] = dram_cmd_refresh((uint8_t)(line & 0x7Fu));
 
-    // Pad remaining slots with idle command (op=00)
+    // Pad with idle (op=00) — DMA always sends MAX_DRAM_CMDS_PER_LINE words
     while (n < MAX_DRAM_CMDS_PER_LINE)
-        cmds[n++] = 0;
+        cmds[n++] = 0u;
 
     buf->dram_cmd_count = n;
 }
@@ -257,8 +340,14 @@ void ula_dma_irq_handler(void) {
     if (current_line >= TOTAL_LINES)
         current_line = 0;
 
+    // Arm shadow VRAM capture for the new scanline's DRAM fetches
+    dram_begin_line(current_line);
+
     // Start DMA on the buffer that was precomputed by Core 0
     ula_dma_start(active_buf);
+
+    // Signal Core 0 that the new scanline has started
+    scanline_ready = true;
 
     // Precompute the next scanline into the now-idle buffer.
     // This runs inside the IRQ — keep it fast. If preparation is too slow,

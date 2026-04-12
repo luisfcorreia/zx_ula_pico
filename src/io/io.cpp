@@ -63,9 +63,9 @@ static void port_fe_write(uint8_t d) {
                 while (!gpio_get(PIN_WR_N)) tight_loop_contents();
             }
         }
-        // Flash counter: increment on VSync falling edge
+        // VSync edge detection retained for any future Core 1 use;
+        // flash_cnt is incremented by Core 0 (video.cpp) once per frame.
         bool vs = vsync_active();
-        if (vsync_prev && !vs) flash_cnt++;
         vsync_prev = vs;
     }
 }
