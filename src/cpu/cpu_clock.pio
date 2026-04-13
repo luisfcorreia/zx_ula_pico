@@ -1,33 +1,17 @@
 ; =============================================================================
-; cpu_clock.pio — contention-gated 3.5 MHz CPU clock, DMA-fed bitstream
-; PIO0 SM3, running at 7 MHz (PIO0_CLK_DIV = 36 from 252 MHz)
+; cpu_clock.pio — contention-aware 3.5 MHz CPU clock, DMA-fed bitstream
+; PIO0 SM3, clkdiv=36 → 7 MHz SM clock
 ;
-; REDESIGN FOR DMA:
-;   The original design had Core 0 pushing one contention bit per pixel clock
-;   via pio_sm_put(), requiring tight per-pixel loop coupling.
+; One bit per SM cycle from the TX FIFO.
+; Normal: alternating 1,0,1,0 → 3.5 MHz square wave
+; Contended: consecutive 1s → clock held HIGH (CPU wait state)
 ;
-;   This version precomputes the entire clock waveform for a scanline in C:
-;   - Normal pixels: alternating 1, 0, 1, 0 ... (3.5 MHz square wave)
-;   - Contended pixels: 1, 1, 1, 1 ... (clock held HIGH)
-;   One bit per pixel clock, packed MSB-first into uint32_t words.
-;
-;   DMA feeds the precomputed buffer into TX FIFO, paced by DREQ.
-;   Autopull threshold = 32. SM outputs one bit per cycle at 7 MHz.
-;
-;   Contention pattern for ZX Spectrum 48K is deterministic per scanline
-;   position and can be fully precomputed — no runtime decisions needed.
-;
-; Program is one instruction — minimum latency, deterministic timing.
+; DMA pair (ch_clock_0 ↔ ch_clock_1) self-chains with zero gap so the SM
+; never stalls between scanlines.
 ; =============================================================================
 
 .program cpu_clock
 
 .wrap_target
-    out pins, 1         ; 1 pixel clock: shift 1 clock bit onto CLOCK pin
-                        ; autopull refills OSR from TX FIFO when exhausted
+    out pins, 1
 .wrap
-
-; SM config (set in C):
-;   sm_config_set_out_pins(&c, PIN_CLOCK, 1);
-;   sm_config_set_out_shift(&c, false, true, 32);  // shift left, autopull, threshold=32
-;   sm_config_set_clkdiv(&c, 36.0f);               // 7 MHz from 252 MHz
