@@ -1,22 +1,33 @@
 // =============================================================================
-// io.cpp — Core 1: port 0xFE decode, keyboard, sound, flash counter
+// io.cpp — Core 1: port 0xFE decode, keyboard, sound, CPU clock contention
+//
+// Contention logic:
+//   The ZX Spectrum ULA holds the CPU clock HIGH (inserting wait states) when
+//   ALL of the following are true simultaneously:
+//     1. ULA is fetching VRAM to draw the current scanline (ula_fetch_active)
+//     2. CPU has MREQ_N asserted (accessing memory)
+//     3. A15=0, A14=1 (address is in 0x4000-0x7FFF — contended RAM)
+//
+//   Implementation:
+//     Core 1 polls the above condition every iteration.
+//     When contention is needed:
+//       - Spin until PIN_CLOCK reads HIGH (so we pause during the HIGH phase)
+//       - Disable SM3 (pio_sm_set_enabled false) — clock frozen HIGH = wait state
+//     When contention condition clears:
+//       - Re-enable SM3 — clock resumes from where it stopped
 // =============================================================================
 
 #include "io.h"
+#include "cpu/cpu.h"
+#include "ula/ula_dma.h"
 #include "pinmap.h"
 #include "pico/stdlib.h"
+#include "hardware/pio.h"
 #include "hardware/gpio.h"
 
 extern volatile uint8_t border_colour;
 extern volatile uint8_t flash_cnt;
 extern volatile uint8_t sound_out;
-
-static bool vsync_prev = true;
-
-// VSync detection: both YN MSBs high = sync tip (all 4 bits = 15)
-static inline bool vsync_active(void) {
-    return gpio_get(PIN_YN_BASE + 3) & gpio_get(PIN_YN_BASE + 2);
-}
 
 static inline uint8_t read_dbus(void) {
     return (uint8_t)((gpio_get_all() >> PIN_D_BASE) & 0xFF);
@@ -32,14 +43,12 @@ static inline void release_dbus(void) {
     gpio_set_dir_masked(0xFFu << PIN_D_BASE, 0);
 }
 
-// Port 0xFE read: {1, EAR, 1, T4, T3, T2, T1, T0}
 static uint8_t port_fe_read(void) {
     uint8_t ear = gpio_get(PIN_SOUND) ? 1 : 0;
     uint8_t t   = (uint8_t)((gpio_get_all() >> PIN_T_BASE) & 0x1F);
-    return 0xA0u | (ear << 6) | t;  // bits 7 and 5 always 1
+    return 0xA0u | (ear << 6) | t;
 }
 
-// Port 0xFE write: d[4]=SPK, d[3]=MIC, d[2:0]=border {G,R,B}
 static void port_fe_write(uint8_t d) {
     sound_out     = ((d >> 4) & 1) | ((d >> 3) & 1);
     border_colour = d & 0x07;
@@ -51,8 +60,41 @@ static void port_fe_write(uint8_t d) {
     }
 }
 
+// Returns true if CPU is accessing contended RAM right now
+static inline bool cpu_contending(void) {
+    return ula_fetch_active
+        && !gpio_get(PIN_MREQ_N)
+        && !gpio_get(PIN_A15)
+        &&  gpio_get(PIN_A14);
+}
+
 [[noreturn]] void io_core1_entry(void) {
+    bool clock_held = false;
+
     while (true) {
+        // ----------------------------------------------------------------
+        // Contention: hold CPU clock HIGH when CPU and ULA both want VRAM
+        // ----------------------------------------------------------------
+        if (cpu_contending()) {
+            if (!clock_held) {
+                // Wait until clock is HIGH so we pause during the HIGH phase,
+                // giving the CPU a stretched HIGH = valid wait state.
+                // Core 1 runs at ~250 MHz; the 7 MHz clock gives ~35 cycles
+                // per half-period so we will catch the HIGH in time.
+                while (!gpio_get(PIN_CLOCK)) tight_loop_contents();
+                pio_sm_set_enabled(pio0, SM_CPUCLK, false);
+                clock_held = true;
+            }
+        } else {
+            if (clock_held) {
+                pio_sm_set_enabled(pio0, SM_CPUCLK, true);
+                clock_held = false;
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // Port 0xFE I/O
+        // ----------------------------------------------------------------
         if (!gpio_get(PIN_IO_ULA_N)) {
             if (!gpio_get(PIN_RD_N)) {
                 drive_dbus(port_fe_read());
@@ -63,9 +105,5 @@ static void port_fe_write(uint8_t d) {
                 while (!gpio_get(PIN_WR_N)) tight_loop_contents();
             }
         }
-        // VSync edge detection retained for any future Core 1 use;
-        // flash_cnt is incremented by Core 0 (video.cpp) once per frame.
-        bool vs = vsync_active();
-        vsync_prev = vs;
     }
 }

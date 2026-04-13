@@ -35,37 +35,33 @@
 #define PIN_T_BASE      28
 #define PIN_T_COUNT     5
 
-// /Y DAC (GP33–GP36) — 4-bit, 15=sync tip, 11=black, 0=peak white
-// Full 4-bit luma resolution retained: sync + 15 distinct levels.
+// /Y DAC (GP33–GP36)
 #define PIN_YN_BASE     33
 #define PIN_YN_COUNT    4
 
-// U Cb (GP37) — 1-bit sign placeholder until oscilloscope calibration.
-// 0=negative Cb (green/red dominant), 1=positive Cb (blue dominant) or neutral.
-// Expand to 4-bit (GP37–GP40) once scope measurements are available.
+// U Cb (GP37)
 #define PIN_UO_BASE     37
 #define PIN_UO_COUNT    1
 
-// V Cr (GP38) — 1-bit sign placeholder until oscilloscope calibration.
-// 0=negative Cr (green/blue dominant), 1=positive Cr (red dominant) or neutral.
-// Expand to 4-bit (GP38–GP41) once scope measurements are available.
+// V Cr (GP38)
 #define PIN_VO_BASE     38
 #define PIN_VO_COUNT    1
 
-// RGBi outputs (GP39–GP42) — all four bits present for prototype testing.
-// Connect to RGB monitor, SCART cable, or oscilloscope for video validation.
+// RGBi outputs (GP39–GP42)
 #define PIN_R           39
 #define PIN_G           40
 #define PIN_B           41
-#define PIN_BRIGHT      42  // Intensity — was omitted, now restored
+#define PIN_BRIGHT      42
 
-// Sync outputs (GP43–GP44) — separate H and V sync for prototype testing.
-// Required for RGB monitor input (SCART or VGA-rate monitor with 15 kHz support).
-// These are TTL-level active-low signals matching the raster timing constants below.
+// Sync outputs (GP43–GP44)
 #define PIN_HSYNC_N     43
 #define PIN_VSYNC_N     44
 
-// GP45–GP47 — reserved for future use (additional DAC bits when U/V expanded)
+// Contention signal (GP45) — output driven by Core 1
+// HIGH when CPU is accessing contended RAM (A15=0, A14=1, MREQ_N=0).
+// Read by cpu_clock SM3 via JMP PIN to implement real-time contention.
+
+// GP46–GP47 — reserved
 #define PIN_SPARE_BASE  45
 #define PIN_SPARE_COUNT 3
 
@@ -76,9 +72,9 @@
 #define SYS_CYCLES_PER_PIXEL     36
 
 // DRAM (4116-4) timing in 252 MHz system cycles (1 cycle = ~4 ns)
-#define DRAM_RAS_CYCLES          38   // tRAS min 150 ns → 38 × 4 ns = 152 ns ✓
-#define DRAM_CAS_CYCLES          19   // tCAS min  75 ns → 19 × 4 ns =  76 ns ✓
-#define DRAM_RP_CYCLES           25   // tRP  min 100 ns → 25 × 4 ns = 100 ns ✓
+#define DRAM_RAS_CYCLES          38
+#define DRAM_CAS_CYCLES          19
+#define DRAM_RP_CYCLES           25
 
 // Raster timing (pixel clocks at 7 MHz)
 #define HC_MAX                  447

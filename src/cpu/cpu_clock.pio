@@ -1,33 +1,21 @@
 ; =============================================================================
-; cpu_clock.pio — contention-gated 3.5 MHz CPU clock, DMA-fed bitstream
-; PIO0 SM3, running at 7 MHz (PIO0_CLK_DIV = 36 from 252 MHz)
+; cpu_clock.pio — 3.5 MHz CPU clock, free-running
+; PIO0 SM3, clkdiv=36 → 7 MHz SM clock (1 instruction = 142.86 ns)
 ;
-; REDESIGN FOR DMA:
-;   The original design had Core 0 pushing one contention bit per pixel clock
-;   via pio_sm_put(), requiring tight per-pixel loop coupling.
+; Two instructions per full cycle = 285.71 ns period = 3.5 MHz exactly.
+; No FIFO, no autopull, no DMA — SM runs indefinitely from the moment
+; pio_enable_sm_mask_in_sync() fires, with zero dependency on DMA setup.
 ;
-;   This version precomputes the entire clock waveform for a scanline in C:
-;   - Normal pixels: alternating 1, 0, 1, 0 ... (3.5 MHz square wave)
-;   - Contended pixels: 1, 1, 1, 1 ... (clock held HIGH)
-;   One bit per pixel clock, packed MSB-first into uint32_t words.
-;
-;   DMA feeds the precomputed buffer into TX FIFO, paced by DREQ.
-;   Autopull threshold = 32. SM outputs one bit per cycle at 7 MHz.
-;
-;   Contention pattern for ZX Spectrum 48K is deterministic per scanline
-;   position and can be fully precomputed — no runtime decisions needed.
-;
-; Program is one instruction — minimum latency, deterministic timing.
+; Contention (clock stretching) is handled externally by Core 1:
+;   When MREQ_N=0, A15=0, A14=1 during a ULA fetch window,
+;   Core 1 polls until PIN_CLOCK=HIGH then calls pio_sm_set_enabled(false).
+;   The SM freezes with clock HIGH (Z80 wait state).
+;   When contention clears, Core 1 calls pio_sm_set_enabled(true).
 ; =============================================================================
 
 .program cpu_clock
 
 .wrap_target
-    out pins, 1         ; 1 pixel clock: shift 1 clock bit onto CLOCK pin
-                        ; autopull refills OSR from TX FIFO when exhausted
+    set pins, 1     ; clock HIGH — 1 SM cycle (142.86 ns)
+    set pins, 0     ; clock LOW  — 1 SM cycle (142.86 ns)
 .wrap
-
-; SM config (set in C):
-;   sm_config_set_out_pins(&c, PIN_CLOCK, 1);
-;   sm_config_set_out_shift(&c, false, true, 32);  // shift left, autopull, threshold=32
-;   sm_config_set_clkdiv(&c, 36.0f);               // 7 MHz from 252 MHz
