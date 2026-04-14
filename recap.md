@@ -5,10 +5,10 @@
 Board: WeAct Studio RP2350B, 252 MHz (VCO=1512 MHz, POSTDIV1=6, POSTDIV2=1)
 Target: Replace Ferranti ULA with RP2350B acting as memory controller, video generator, CPU clock, and I/O decoder
 
-Pin Map (final)
+### Pin Map (final)
 GPIOFunctionGP0–6RA[6:0] DRAM row/col addressGP7–9/RAS, /CAS, /WEGP10–17D[7:0] bidirectional data busGP18–23/WR, /RD, /MREQ, /IO_ULA, A14, A15GP24/INT (PIO0 SM0 OUT)GP25CLOCK (PIO0 SM3 SET, free-running 3.5 MHz)GP26/ROM_CS (GPIO, Core 0)GP27SOUND (bidirectional)GP28–32T[4:0] keyboard matrixGP33–36YN[3:0] luma DACGP37UO (Cb sign)GP38VO (Cr sign)GP39–42R, G, B, BRIGHTGP43–44/HSYNC, /VSYNCGP45–47spare
 
-Architecture
+## Architecture
 Core 0 — video scanline loop
 
 Waits on scanline_ready flag set by DMA IRQ
@@ -50,7 +50,7 @@ Call dram_begin_line(), ula_dma_start(), set scanline_ready = true
 Does not call ula_scanline_prepare — Core 0 does that
 
 
-Shadow VRAM
+# Shadow VRAM
 volatile uint8_t shadow_vram[0x1B00] in dram.cpp
 
 Written by D-bus capture ISR (PIO1 IRQ0 → Core 0)
@@ -70,7 +70,7 @@ sync_gpio_hi(hsync_n, vsync_n) outputs YN=15 (sync tip), UV neutral
 Video Timing (PAL, pixel clocks at 7 MHz)
 ConstantValuePIXELS_PER_LINE456TOTAL_LINES312ACTIVE_LINES192ACTIVE_PIXELS256HBLANK_START320HSYNC_START/END344/375VBLANK/VSYNC_START248
 
-Bugs Fixed (cumulative)
+# Bugs Fixed (cumulative)
 
 include/ula_dma.h (stale duplicate header) deleted — was causing dual ScanlineBuffer ABI split
 dram.h command builder return types void → uint32_t
@@ -88,7 +88,7 @@ CPU clock SM stalling on empty FIFO (DMA-fed approach) — replaced with free-ru
 Contention: was precomputed (wrong — can't know CPU address ahead of time) — now real-time via Core 1 SM pause/resume
 
 
-Outstanding / Not Yet Tested
+# Outstanding / Not Yet Tested
 
 Contention timing precision (Core 1 GPIO polling latency ~few ns vs. 142 ns half-period — should be fine)
 DRAM RAS/CAS timing on actual 4116 chips
