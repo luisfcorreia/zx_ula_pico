@@ -1,96 +1,77 @@
 ; =============================================================================
 ; dram.pio — DRAM controller for ZX Spectrum 4116 DRAM
-; PIO1 SM0 and SM2, running at 252 MHz (no divider, ~4 ns per instruction)
+; PIO1, 252 MHz (~4 ns per instruction cycle)
 ;
-; Command word format (32-bit, pushed by Core 0):
+; Command word format (32-bit, left-shifted OSR, MSB first):
 ;   [31:30]  op:   00=idle, 01=CPU cycle, 10=ULA read, 11=refresh
-;   [29]     wr:   1=write cycle (/WE active during CPU op)
+;   [29]     wr:   ignored (Core 1 drives /WE via GPIO independently)
 ;   [28:22]  col:  column address [6:0]
 ;   [21:15]  row:  row address    [6:0]
 ;   [14:0]   unused
 ;
-; Pin assignments:
-;   SET  pins base = PIN_RAS_N (GP7), count=3 → /RAS, /CAS, /WE
-;   OUT  pins base = PIN_RA_BASE (GP0), count=7 → RA[6:0]
+; Each command must consume exactly 32 bits from the OSR so autopull framing
+; stays correct across sequential DMA words.
 ;
-; Timing at 252 MHz (1 instruction = ~4 ns, delay [N] adds N+1 cycles total):
-;   /RAS pulse: 38 cycles = 152 ns  ≥ tRAS 150 ns ✓
-;   /CAS pulse: 19 cycles =  76 ns  ≥ tCAS  75 ns ✓
-;   Precharge:  25 cycles = 100 ns  ≥ tRP  100 ns ✓
-;   tRCD = 0 (late-CAS: /CAS falls while /RAS held)
+; Pin assignments (count=2 for SET: PIO owns /RAS and /CAS only):
+;   SET  base = PIN_RAS_N (GP7), count=2  → bit0=/RAS, bit1=/CAS
+;   OUT  base = PIN_RA_BASE (GP0), count=7 → RA[6:0]
+;   /WE  (GP9) is NOT owned by PIO — Core 1 drives it via gpio_put()
 ;
-; SM0 fires IRQ 4 during the /CAS hold window (ULA read cycles only).
-; PIO1 SM1 waits on IRQ 4 then fires CPU IRQ 0 → Core 0 captures D bus.
+; Timing (4 ns/cycle):
+;   tRCD  (RAS→CAS delay): 20 cycles = 80 ns ✓  (spec: ≥ 30–80 ns)
+;   tCAS  (/CAS hold):     19 cycles = 76 ns ✓  (spec: ≥ 75 ns)
+;   tRAS  (/RAS hold):     38 cycles = 152 ns ✓ (spec: ≥ 150 ns)
+;   tRP   (precharge):     25 cycles = 100 ns ✓ (spec: ≥ 100 ns)
 ; =============================================================================
 
-; Individual signal bits (active-low, 3-bit SET pins field)
-; FIX: pioasm does not support 0b binary literals; use decimal equivalents.
-.define RAS_N    1   ; 0b001
-.define CAS_N    2   ; 0b010
-.define WE_N     4   ; 0b100
-.define ALL_N    7   ; 0b111  — all deasserted (safe idle)
-
-; Pre-computed pin states for set instructions.
-; FIX: pioasm does not reliably evaluate bitwise NOT expressions (~) in
-; instruction operands; compute them here as named constants instead.
-;   RAS_ASSERT  = ALL_N & ~RAS_N              = 7 & ~1 = 6  (0b110)
-;   CAS_ASSERT  = ALL_N & ~RAS_N & ~CAS_N     = 7 & ~1 & ~2 = 4  (0b100)
-;   ALL_ASSERT  = ALL_N & ~RAS_N & ~CAS_N & ~WE_N = 0  (0b000)
-.define RAS_ASSERT   6   ; /RAS low,  /CAS high, /WE high
-.define CAS_ASSERT   4   ; /RAS low,  /CAS low,  /WE high
-.define ALL_ASSERT   0   ; /RAS low,  /CAS low,  /WE low
+.define ALL_N       7   ; /RAS=1, /CAS=1 (2-bit SET: 11)
+.define RAS_ASSERT  6   ; /RAS=0, /CAS=1 (2-bit SET: 10)
+.define CAS_ASSERT  4   ; /RAS=0, /CAS=0 (2-bit SET: 00)
 
 .program dram_ctrl
 
+; idle: wait for next non-zero command, consuming all 32 bits each pass
+.wrap_target
 idle:
-    set pins, ALL_N             ; /RAS /CAS /WE all deasserted (safe idle)
-    ; (autopull: SM stalls at first `out` below when TX FIFO empty — no pull needed)
-
-    out x, 2                    ; op[1:0]
-    jmp x-- not_idle            ; x≥1: not idle
-    jmp idle                    ; op=0: idle, loop
+    out x, 2                    ; [0] op → x  (stalls here when FIFO empty)
+    jmp x-- not_idle            ; [1] if op≠0: jump; x = op-1
+    out null, 30                ; [2] op=0: discard remaining 30 bits
+.wrap                           ;     → back to idle [0]
 
 not_idle:
-    jmp x-- not_cpu             ; x≥1 after decrement: not CPU
-    ; ---- op=1: CPU cycle ---------------------------------------------------
-    out y, 1                    ; y = wr bit [29]
-    out null, 14                ; discard col [28:22] + row [21:15] (CPU addr from ext mux)
-    set pins, RAS_ASSERT [31]   ; /RAS low — 32 cycles...
-    nop              [5]        ; ...+6 = 38 cycles total (tRAS ≥ 150 ns ✓)
-    set pins, CAS_ASSERT [17]   ; /CAS low, /RAS held, 18+1=19 cycles
-    jmp !y cpu_rd               ; y=0: read cycle
-    set pins, ALL_ASSERT [2]    ; /WE low for write
-cpu_rd:
-    set pins, ALL_N [24]        ; release all, precharge 25 cycles
-    jmp idle
+    jmp x-- op2or3              ; [3] if x>0 (op≥2): jump; x = op-2
 
-not_cpu:
-    jmp x-- not_ula             ; x≥1: not ULA read
-    ; ---- op=2: ULA read cycle ----------------------------------------------
-    out null, 1                 ; discard wr (always read)
-    out pins, 7                 ; RA[6:0] = col address [28:22]
-    out x, 7                    ; x = row address [21:15] (hold in x)
-    ; Present row address then assert /RAS
-    ; (row addr must be stable before /RAS falls: guaranteed by OUT above)
-    set pins, RAS_ASSERT        ; /RAS falls — row latched by DRAM
-    ; Switch to column address while /RAS is held
-    mov pins, x         [3]     ; RA[6:0] = row→col (x holds row; re-use col from OUT)
-    ; Note: col was already in OUT register before row — swap: OUT col first,
-    ; then hold row in X. Revised approach below is cleaner:
-    ; /CAS falls while /RAS still held → tRCD = 0 ns
-    set pins, CAS_ASSERT [17]   ; /CAS hold 19 cycles
-    ; Signal to SM1 (D-bus capture) that data is valid
-    irq 4               [0]     ; fire IRQ4 → SM1 triggers CPU IRQ
-    ; Hold /CAS one more cycle while IRQ propagates
-    set pins, ALL_N [24]        ; release /CAS then /RAS, precharge
-    jmp idle
+    ; ---- op=01: CPU memory cycle (/RAS + /CAS only, /WE via Core 1 GPIO) ----
+    out null, 30                ; [4] discard wr+col+row+unused (30 bits)
+    set pins, RAS_ASSERT [19]   ; [5] /RAS low; hold 20 cycles = 80 ns (tRCD)
+    set pins, CAS_ASSERT [17]   ; [6] /CAS low; hold 19 cycles = 76 ns (tCAS)
+    set pins, ALL_N [24]        ; [7] release; precharge 25 cycles = 100 ns
+    jmp idle                    ; [8]
 
-not_ula:
-    ; ---- op=3: RAS-only refresh --------------------------------------------
-    out null, 1                 ; discard wr
-    out null, 7                 ; discard col
-    out pins, 7                 ; RA[6:0] = refresh row address [21:15]
-    set pins, RAS_ASSERT [31]   ; /RAS low — 32 cycles...
-    nop              [5]        ; ...+6 = 38 cycles total (tRAS ≥ 150 ns ✓)
-    set pins, ALL_N [24]        ; /RAS high, precharge
-    jmp idle
+op2or3:
+    jmp x-- op3                 ; [9] if x>0 (op=3): jump
+
+    ; ---- op=10: ULA read cycle ----
+    out null, 1                 ; [10] discard wr (ULA always reads)
+    out x, 7                    ; [11] x = col address [28:22]
+    out pins, 7                 ; [12] RA[6:0] = row address [21:15]
+    set pins, RAS_ASSERT        ; [13] /RAS low — row address latched by DRAM
+    nop [18]                    ; [14] wait 19 cycles → tRCD = 20 cycles = 80 ns ✓
+    mov pins, x                 ; [15] RA[6:0] = col address
+    set pins, CAS_ASSERT [17]   ; [16] /CAS low; hold 19 cycles = 76 ns ✓
+    irq 4                       ; [17] signal D-bus capture SM (data valid)
+    out null, 15                ; [18] discard unused bits [14:0]
+    set pins, ALL_N [24]        ; [19] release; precharge 25 cycles ✓
+    jmp idle                    ; [20]
+
+op3:
+    ; ---- op=11: RAS-only refresh ----
+    out null, 8                 ; [21] discard wr(1) + col(7) = 8 bits
+    out pins, 7                 ; [22] RA[6:0] = refresh row address [21:15]
+    out null, 15                ; [23] discard unused bits [14:0]
+    set pins, RAS_ASSERT [31]   ; [24] /RAS low; 32 cycles = 128 ns...
+    nop [5]                     ; [25] ...+ 6 = 38 cycles = 152 ns ≥ tRAS 150 ns ✓
+    set pins, ALL_N [24]        ; [26] /RAS high; precharge 25 cycles ✓
+    jmp idle                    ; [27]
+
+; Total: 28 instructions + 3 for D-bus capture SM = 31 ≤ 32 ✓

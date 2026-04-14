@@ -1,20 +1,20 @@
 // =============================================================================
-// io.cpp — Core 1: port 0xFE decode, keyboard, sound, CPU clock contention
+// io.cpp — Core 1: port 0xFE decode, keyboard, sound, ROM_CS, /WE, contention
 //
-// Contention logic:
-//   The ZX Spectrum ULA holds the CPU clock HIGH (inserting wait states) when
-//   ALL of the following are true simultaneously:
-//     1. ULA is fetching VRAM to draw the current scanline (ula_fetch_active)
-//     2. CPU has MREQ_N asserted (accessing memory)
-//     3. A15=0, A14=1 (address is in 0x4000-0x7FFF — contended RAM)
+// Core 1 drives three combinatorial signals continuously:
 //
-//   Implementation:
-//     Core 1 polls the above condition every iteration.
-//     When contention is needed:
-//       - Spin until PIN_CLOCK reads HIGH (so we pause during the HIGH phase)
-//       - Disable SM3 (pio_sm_set_enabled false) — clock frozen HIGH = wait state
-//     When contention condition clears:
-//       - Re-enable SM3 — clock resumes from where it stopped
+//   PIN_ROM_CS_N = A14 | A15
+//     ROM selected (active low) when both A14=0 and A15=0 (0x0000-0x3FFF).
+//     Purely address-driven, no MREQ qualification needed for ROM CS.
+//
+//   PIN_WE_N = !(MREQ=1 & A15=0 & A14=1 & WR=1)
+//     DRAM write enable: asserted when CPU writes to contended RAM (0x4000-0x7FFF).
+//     Independent of ULA video fetch cycle.
+//     Natural Core 1 loop latency provides ~30 ns propagation delay.
+//
+//   Contention (SM3 pause/resume):
+//     When ULA is fetching AND CPU accesses 0x4000-0x7FFF,
+//     hold CPU clock HIGH (wait state) by disabling PIO0 SM3.
 // =============================================================================
 
 #include "io.h"
@@ -60,27 +60,30 @@ static void port_fe_write(uint8_t d) {
     }
 }
 
-// Returns true if CPU is accessing contended RAM right now
-static inline bool cpu_contending(void) {
-    return ula_fetch_active
-        && !gpio_get(PIN_MREQ_N)
-        && !gpio_get(PIN_A15)
-        &&  gpio_get(PIN_A14);
-}
-
 [[noreturn]] void io_core1_entry(void) {
     bool clock_held = false;
 
     while (true) {
-        // ----------------------------------------------------------------
-        // Contention: hold CPU clock HIGH when CPU and ULA both want VRAM
-        // ----------------------------------------------------------------
-        if (cpu_contending()) {
+        bool mreq = !gpio_get(PIN_MREQ_N);
+        bool a15  =  gpio_get(PIN_A15);
+        bool a14  =  gpio_get(PIN_A14);
+        bool wr   = !gpio_get(PIN_WR_N);
+
+        // ---- ROM chip select: A14 OR A15 (deasserts ROM when either is high) ----
+        gpio_put(PIN_ROM_CS_N, a14 | a15);
+
+        // ---- DRAM /WE: assert when CPU writes to 0x4000-0x7FFF ----
+        // Active low: assert when MREQ=1, A15=0, A14=1, WR=1
+        // Natural loop latency provides ~30 ns propagation delay.
+        bool cpu_write_contended = mreq & !a15 & a14 & wr;
+        gpio_put(PIN_WE_N, !cpu_write_contended);
+
+        // ---- CPU clock contention ----
+        // Hold clock HIGH (wait state) when ULA is fetching AND
+        // CPU is accessing contended RAM (0x4000-0x7FFF)
+        bool contend = ula_fetch_active & mreq & !a15 & a14;
+        if (contend) {
             if (!clock_held) {
-                // Wait until clock is HIGH so we pause during the HIGH phase,
-                // giving the CPU a stretched HIGH = valid wait state.
-                // Core 1 runs at ~250 MHz; the 7 MHz clock gives ~35 cycles
-                // per half-period so we will catch the HIGH in time.
                 while (!gpio_get(PIN_CLOCK)) tight_loop_contents();
                 pio_sm_set_enabled(pio0, SM_CPUCLK, false);
                 clock_held = true;
@@ -92,9 +95,7 @@ static inline bool cpu_contending(void) {
             }
         }
 
-        // ----------------------------------------------------------------
-        // Port 0xFE I/O
-        // ----------------------------------------------------------------
+        // ---- Port 0xFE I/O ----
         if (!gpio_get(PIN_IO_ULA_N)) {
             if (!gpio_get(PIN_RD_N)) {
                 drive_dbus(port_fe_read());
