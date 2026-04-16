@@ -6,45 +6,49 @@
 //
 // Index: {BRIGHT[3], G[2], R[1], B[0]}  (ZX attribute GRB order)
 //
-// Packed uint16_t: bits[11:8]=yn(4-bit), bits[3:2]=uo(2 MSBs of 4-bit), bits[1:0]=vo(2 MSBs)
-// Since hardware only has 1 pin each for U/V, we use the sign bit (bit3 of the 4-bit value).
-// uo_sign = 1 when uo_val >= 8 (positive/neutral Cb), 0 when negative
-// vo_sign = 1 when vo_val >= 8 (positive/neutral Cr), 0 when negative
+// Packed uint32_t: bits[11:8]=yn, bits[7:4]=uo, bits[3:0]=vo
 //
-// Packing: bits[11:8]=yn, bit[1]=uo_sign, bit[0]=vo_sign
+// YN values from Verilog Section 7 (exact):
+//   sync tip=15, black pedestal=11, bright white=0
 //
-// /Y values from Verilog (exact match):
-//   sync tip=15, black=11, bright white=0
-// U/V sign from Verilog 4-bit DAC values (BT.601 derived):
-//   uo >= 8 → sign=1 (positive Cb), uo < 8 → sign=0
-//   vo >= 8 → sign=1 (positive Cr), vo < 8 → sign=0
+// UO (Cb) and VO (Cr) values from Verilog Section 7 BT.601 derivation:
+//   Scale: 8=neutral, 14=max positive, 2=max negative
+//   BRIGHT does not affect U or V.
+//
+// U table (indexed by {G,R,B}):
+//   000=8  001=14  010=6   011=12  100=4   101=10  110=2   111=8
+// V table (indexed by {G,R,B}):
+//   000=8  001=7   010=14  011=13  100=3   101=2   110=9   111=8
 // =============================================================================
 
-static const uint16_t colour_lut[16] = {
-    //  {I,G,R,B}  Colour          yn   uo  vo
-    0x0B03,  // 0000  Black/N        11    1   1  (neutral: uo=8, vo=8)
-    0x0A02,  // 0001  Blue/N         10    1   0  (uo=14 pos, vo=7 neg)
-    0x0801,  // 0010  Red/N           8    0   1  (uo=6 neg, vo=14 pos)
-    0x0703,  // 0011  Magenta/N       7    1   1  (uo=12 pos, vo=13 pos)
-    0x0600,  // 0100  Green/N         6    0   0  (uo=4 neg, vo=3 neg)
-    0x0502,  // 0101  Cyan/N          5    1   0  (uo=10 pos, vo=2 neg)
-    0x0401,  // 0110  Yellow/N        4    0   1  (uo=2 neg, vo=9 pos)
-    0x0303,  // 0111  White/N         3    1   1  (neutral: uo=8, vo=8)
-    0x0B03,  // 1000  Black/B        11    1   1
-    0x0902,  // 1001  Blue/B          9    1   0
-    0x0701,  // 1010  Red/B           7    0   1
-    0x0603,  // 1011  Magenta/B       6    1   1
-    0x0400,  // 1100  Green/B         4    0   0
-    0x0302,  // 1101  Cyan/B          3    1   0
-    0x0101,  // 1110  Yellow/B        1    0   1
-    0x0003,  // 1111  White/B         0    1   1
+// Pack: bits[11:8]=yn, bits[7:4]=uo, bits[3:0]=vo
+#define LUTV(yn, uo, vo)  ((uint32_t)(((yn)<<8)|((uo)<<4)|(vo)))
+
+static const uint32_t colour_lut[16] = {
+    // {I,G,R,B}   Colour       yn  uo  vo
+    LUTV(11, 8, 8),  // 0000  Black  (normal)
+    LUTV(10,14, 7),  // 0001  Blue   (normal)
+    LUTV( 8, 6,14),  // 0010  Red    (normal)
+    LUTV( 7,12,13),  // 0011  Magenta(normal)
+    LUTV( 6, 4, 3),  // 0100  Green  (normal)
+    LUTV( 5,10, 2),  // 0101  Cyan   (normal)
+    LUTV( 4, 2, 9),  // 0110  Yellow (normal)
+    LUTV( 3, 8, 8),  // 0111  White  (normal)
+    LUTV(11, 8, 8),  // 1000  Black  (bright — same as normal)
+    LUTV( 9,14, 7),  // 1001  Blue   (bright)
+    LUTV( 7, 6,14),  // 1010  Red    (bright)
+    LUTV( 6,12,13),  // 1011  Magenta(bright)
+    LUTV( 4, 4, 3),  // 1100  Green  (bright)
+    LUTV( 3,10, 2),  // 1101  Cyan   (bright)
+    LUTV( 1, 2, 9),  // 1110  Yellow (bright)
+    LUTV( 0, 8, 8),  // 1111  White  (bright)
 };
 
-static inline uint8_t lut_yn(uint8_t idx) { return (colour_lut[idx & 0xF] >> 8) & 0xF; }
-static inline uint8_t lut_uo(uint8_t idx) { return (colour_lut[idx & 0xF] >> 1) & 0x1; }
-static inline uint8_t lut_vo(uint8_t idx) { return  colour_lut[idx & 0xF]       & 0x1; }
+static inline uint8_t lut_yn(uint8_t idx) { return (colour_lut[idx & 0xF] >> 8) & 0xFu; }
+static inline uint8_t lut_uo(uint8_t idx) { return (colour_lut[idx & 0xF] >> 4) & 0xFu; }
+static inline uint8_t lut_vo(uint8_t idx) { return  colour_lut[idx & 0xF]       & 0xFu; }
 
-#define YN_SYNC_TIP   15
-#define YN_BLACK      11
-#define UO_NEUTRAL     1
-#define VO_NEUTRAL     1
+#define YN_SYNC_TIP   15u
+#define YN_BLACK      11u
+#define UO_NEUTRAL     8u
+#define VO_NEUTRAL     8u

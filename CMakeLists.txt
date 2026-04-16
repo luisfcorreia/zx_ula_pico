@@ -45,6 +45,7 @@ target_compile_definitions(zx_ula_pico PRIVATE
     PLL_SYS_POSTDIV2=1
 )
 
+# Disable USB and UART
 pico_enable_stdio_usb(zx_ula_pico 0)
 pico_enable_stdio_uart(zx_ula_pico 0)
 

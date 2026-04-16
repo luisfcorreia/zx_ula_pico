@@ -1,26 +1,37 @@
 #pragma once
 #include <stdint.h>
-
-// Initialise PIO0 SM0 (tick generator) and precompute colour tables.
-void video_init(void);
-
-// Core 0 main loop — never returns.
-// Replicates the ZX Spectrum ULA Verilog always @(negedge clk7) logic:
-//   - Maintains hc/vc raster counters
-//   - Drives DRAM /RAS, /CAS, /WE, A[6:0] per-phase
-//   - Runs pixel pipeline: BitmapReg → SRegister (shift) → colour output
-//   - Outputs yn/uo/vo/r/g/b/bright/hsync/vsync via GPIO HI bank
-//   - Asserts /INT at the correct frame position
-[[noreturn]] void video_run(void);
-
-// Shared flag: set by Core 0 each pixel clock.
-// True when ULA is in an active display fetch window (phases 8-11, Border_n active).
-// Read by Core 1 to gate CPU clock contention.
-extern volatile bool ula_fetch_window;
-
-// gpio helper for high GPIO bank (GP32+)
 #include "hardware/structs/sio.h"
 #include "hardware/address_mapped.h"
+#include "pinmap.h"
+#include "colour_lut.h"
+
+void video_init(void);
+[[noreturn]] void video_run(void);
+
+// Set by Core 0 each pixel clock: true during ULA fetch window (phases 8-11,
+// active display area). Read by Core 1 to gate CPU contention.
+extern volatile bool ula_fetch_window;
+
+// Build a GPIO HI word from yn/uo/vo 4-bit DAC values.
+// No HSYNC/VSYNC/RGBi — sync is embedded in yn, chroma fully in uo/vo.
+static inline uint32_t build_video_word(uint8_t yn, uint8_t uo, uint8_t vo) {
+    return ((uint32_t)(yn & 0xFu) << (PIN_YN_BASE - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)(uo & 0xFu) << (PIN_UO_BASE - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)(vo & 0xFu) << (PIN_VO_BASE - VIDEO_GPIO_HI_BASE));
+}
+
+static inline uint32_t build_colour_word(uint8_t lut_idx) {
+    return build_video_word(lut_yn(lut_idx), lut_uo(lut_idx), lut_vo(lut_idx));
+}
+
+static inline uint32_t build_sync_word(void) {
+    return build_video_word(YN_SYNC_TIP, UO_NEUTRAL, VO_NEUTRAL);
+}
+
+static inline uint32_t build_black_word(void) {
+    return build_video_word(YN_BLACK, UO_NEUTRAL, VO_NEUTRAL);
+}
+
 static inline void ula_gpio_put_hi(uint32_t mask, uint32_t value) {
     hw_write_masked(&sio_hw->gpio_hi_out, value, mask);
 }
