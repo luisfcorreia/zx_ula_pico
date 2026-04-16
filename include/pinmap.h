@@ -60,7 +60,7 @@
 #define PIN_SPARE_COUNT 3
 
 // Timing constants
-#define SYS_CLK_MHZ             252
+#define SYS_FREQ_MHZ             252
 #define PIXEL_CLK_MHZ             7
 #define PIO0_CLK_DIV             36
 #define SYS_CYCLES_PER_PIXEL     36
