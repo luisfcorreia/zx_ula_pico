@@ -6,4 +6,4 @@ void cpu_init(void);
 
 // SM index and program offset — needed by io.cpp for contention pause/resume
 #define SM_CPUCLK           3
-extern unsigned int cpu_clock_program_offset;
+extern int cpu_clock_program_offset;

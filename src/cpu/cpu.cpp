@@ -18,7 +18,7 @@
 
 #include "cpu_clock.pio.h"
 
-uint cpu_clock_program_offset;
+int cpu_clock_program_offset;
 
 void cpu_init(void) {
     cpu_clock_program_offset = pio_add_program(pio0, &cpu_clock_program);
