@@ -106,7 +106,7 @@ See `HARDWARE.md` for DAC values, colour palette, and recommended RGBi circuit.
 
 ## Credits
 
-Reference Verilog model: `reference/ula_zx48k.v`, converted from original VHDL by Miguel Angel Rodriguez Jodar (Dept. Architecture and Computing Technology, University of Seville), created 2012-04-04.
+Reference Verilog model: `reference/ula_zx48k.v`, (verilog converted from original VHDL) by Miguel Angel Rodriguez Jodar (Dept. Architecture and Computing Technology, University of Seville), created 2012-04-04.
 
 LLM assistance: Claude.ai Sonnet 4.6 Adaptive (initial conversion); big-pickle (opencode/big-pickle).
 
