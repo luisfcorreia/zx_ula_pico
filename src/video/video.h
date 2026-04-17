@@ -12,12 +12,11 @@ void video_init(void);
 // active display area). Read by Core 1 to gate CPU contention.
 extern volatile bool ula_fetch_window;
 
-// Build a GPIO HI word from yn/uo/vo 4-bit DAC values.
-// No HSYNC/VSYNC/RGBi — sync is embedded in yn, chroma fully in uo/vo.
+// Build a GPIO HI word: yn=4-bit, uo/vo=3-bit.
 static inline uint32_t build_video_word(uint8_t yn, uint8_t uo, uint8_t vo) {
     return ((uint32_t)(yn & 0xFu) << (PIN_YN_BASE - VIDEO_GPIO_HI_BASE)) |
-           ((uint32_t)(uo & 0xFu) << (PIN_UO_BASE - VIDEO_GPIO_HI_BASE)) |
-           ((uint32_t)(vo & 0xFu) << (PIN_VO_BASE - VIDEO_GPIO_HI_BASE));
+           ((uint32_t)(uo & 7u)  << (PIN_UO_BASE - VIDEO_GPIO_HI_BASE)) |
+           ((uint32_t)(vo & 7u)  << (PIN_VO_BASE - VIDEO_GPIO_HI_BASE));
 }
 
 static inline uint32_t build_colour_word(uint8_t lut_idx) {

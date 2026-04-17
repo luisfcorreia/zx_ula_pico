@@ -38,26 +38,29 @@
 #define PIN_T_BASE      28
 #define PIN_T_COUNT     5
 
-// Video outputs — GP33–GP44 (high GPIO bank, all 12 pins used for YUV)
+// Video outputs — YUV composite via R-2R ladders, plus RGBi TTL bonus
 //
 // /Y luma+sync DAC  — GP33–GP36 (4-bit)
-// U  Cb DAC         — GP37–GP40 (4-bit)
-// V  Cr DAC         — GP41–GP44 (4-bit)
+// U  Cb DAC         — GP37–GP39 (3-bit)
+// V  Cr DAC         — GP40–GP42 (3-bit)
 //
-// Connect a composite video encoder directly to YN, UO, VO R-2R ladders.
+// RGBi bonus TTL outputs — GP43 (R), GP44 (B), GP45 (G), GP46 (I), GP47 (CSYNC)
+//                          (active during active display area only)
 
 #define PIN_YN_BASE     33
 #define PIN_YN_COUNT    4
 
 #define PIN_UO_BASE     37
-#define PIN_UO_COUNT    4
+#define PIN_UO_COUNT    3
 
-#define PIN_VO_BASE     41
-#define PIN_VO_COUNT    4
+#define PIN_VO_BASE     40
+#define PIN_VO_COUNT    3
 
-// GP45–GP47 spare
-#define PIN_SPARE_BASE  45
-#define PIN_SPARE_COUNT 3
+#define PIN_RGB_R       43
+#define PIN_RGB_G       45
+#define PIN_RGB_B       44
+#define PIN_RGB_I       46
+#define PIN_RGB_CSYNC   47
 
 // Timing constants
 #define SYS_FREQ_MHZ             252
@@ -84,9 +87,9 @@
 
 // High GPIO bank (GP32 = bit 0)
 // GP33=bit1 .. GP36=bit4  (YN[3:0])
-// GP37=bit5 .. GP40=bit8  (UO[3:0])
-// GP41=bit9 .. GP44=bit12 (VO[3:0])
+// GP37=bit5 .. GP39=bit7  (UO[2:0])
+// GP40=bit8 .. GP42=bit10 (VO[2:0])
 #define VIDEO_GPIO_HI_BASE  32u
 #define VIDEO_GPIO_HI_MASK  ((0xFu << (PIN_YN_BASE - VIDEO_GPIO_HI_BASE)) | \
-                             (0xFu << (PIN_UO_BASE - VIDEO_GPIO_HI_BASE)) | \
-                             (0xFu << (PIN_VO_BASE - VIDEO_GPIO_HI_BASE)))
+                             (0x7u << (PIN_UO_BASE - VIDEO_GPIO_HI_BASE)) | \
+                             (0x7u << (PIN_VO_BASE - VIDEO_GPIO_HI_BASE)))

@@ -23,7 +23,6 @@ add_executable(zx_ula_pico
 
 pico_generate_pio_header(zx_ula_pico ${CMAKE_CURRENT_SOURCE_DIR}/src/cpu/sync.pio OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 pico_generate_pio_header(zx_ula_pico ${CMAKE_CURRENT_SOURCE_DIR}/src/cpu/cpu_clock.pio OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
-pico_generate_pio_header(zx_ula_pico ${CMAKE_CURRENT_SOURCE_DIR}/src/dram/dram.pio OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
 target_include_directories(zx_ula_pico PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include

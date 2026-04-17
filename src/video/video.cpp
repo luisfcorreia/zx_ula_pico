@@ -102,6 +102,10 @@ volatile bool ula_fetch_window = false;
         // --- /INT ---
         gpio_put(PIN_INT_N, INT_r ? 1 : 0);
 
+        // --- CSYNC (RGBi bonus) — HSync AND VSync, active low ---
+        // HSync_n=0 during HSYNC, VSync_n=0 during VSYNC
+        gpio_put(PIN_RGB_CSYNC, !(HSync_n & VSync_n));
+
         // --- Contention window flag for Core 1 ---
         // display_phase = hc[3] & ~hc[2] = phases 8-11
         ula_fetch_window = Border_n && (hc & 8u) && !(hc & 4u);

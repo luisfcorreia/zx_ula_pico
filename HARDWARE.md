@@ -18,9 +18,9 @@ Direct drop-in: RP2350B mounts on the same 40-pin DIP footprint as the Ferranti 
 | 10 | A5 | out | GP5 | DRAM address bit 5 |
 | 11 | A6 | out | GP6 | DRAM address bit 6 |
 | 12 | /INT | out | GP24 | Interrupt to Z80 |
-| 15 | U (Cb) | out | GP37-GP40 | R-2R DAC, see below |
-| 16 | V (Cr) | out | GP41-GP44 | R-2R DAC, see below |
-| 17 | /Y | out | GP33-GP36 | R-2R DAC, see below |
+| 15 | U (Cb) | out | GP37-GP39 | R-2R DAC, 3-bit |
+| 16 | V (Cr) | out | GP40-GP42 | R-2R DAC, 3-bit |
+| 17 | /Y | out | GP33-GP36 | R-2R DAC, 4-bit |
 | 18 | D0 | bidir | GP10 | Data bus |
 | 19 | T0 | in | GP28 | Keyboard column 0 |
 | 20 | T1 | in | GP29 | Keyboard column 1 |
@@ -43,7 +43,12 @@ Direct drop-in: RP2350B mounts on the same 40-pin DIP footprint as the Ferranti 
 | 37 | A15 | in | GP23 | Z80 address bit 15 |
 | 38 | /MREQ | in | GP20 | Z80 memory request |
 | 39 | Q | in | - | 14 MHz crystal — not used, RP2350B generates own clocks |
-| — | — | — | GP45-GP47 | Spare |
+| — | R (bonus) | out | GP43 | RGBi TTL, active during display only |
+| — | G (bonus) | out | GP45 | RGBi TTL, active during display only |
+| — | B (bonus) | out | GP44 | RGBi TTL, active during display only |
+| — | BRIGHT (bonus) | out | GP46 | RGBi TTL, active during display only |
+| — | CSYNC (bonus) | out | GP47 | RGBi TTL, composite sync (HSync AND VSync, active low) |
+| — | — | — | — | (no spare pins remaining) |
 
 Pins 13, 14, 40 (power/ground) are handled by the PCB as before.
 
@@ -51,15 +56,15 @@ Pins 13, 14, 40 (power/ground) are handled by the PCB as before.
 
 ## R-2R DAC for Composite Video
 
-Three independent 4-bit R-2R resistor ladder DACs, one per component. Each uses 4 GPIO pins at 3.3V logic levels. No external voltage reference needed.
+Three R-2R resistor ladder DACs. /Y is 4-bit. U and V are 3-bit (one pin freed per channel for RGBi bonus output). No external voltage reference needed.
 
 ### DAC bit assignment
 
 ```
-GP33 = YN[0]  (LSB)      GP37 = UO[0]  (LSB)      GP41 = VO[0]  (LSB)
-GP34 = YN[1]              GP38 = UO[1]              GP42 = VO[1]
-GP35 = YN[2]              GP39 = UO[2]              GP43 = VO[2]
-GP36 = YN[3]  (MSB)       GP40 = UO[3]  (MSB)       GP44 = VO[3]  (MSB)
+GP33 = YN[0]  (LSB)      GP37 = UO[0]  (LSB)      GP40 = VO[0]  (LSB)
+GP34 = YN[1]              GP38 = UO[1]              GP41 = VO[1]
+GP35 = YN[2]              GP39 = UO[2]  (MSB)      GP42 = VO[2]  (MSB)
+GP36 = YN[3]  (MSB)
 ```
 
 ### R-2R recommended values
@@ -73,49 +78,50 @@ All inputs should have pull-down resistors (~10 kΩ) to guarantee defined state 
 
 ### Voltage levels (VREF = 3.3 V)
 
-DAC output = VREF × DAC_value / 16
+/Y: DAC output = VREF × DAC_value / 16 (4-bit, 16 levels)
+U/V: DAC output = VREF × DAC_value / 8 (3-bit, 8 levels)
 
-| DAC value | /Y (YN) voltage | U (UO) voltage | V (VO) voltage |
-|---|---|---|---|
-| 15 | 3.062 V | 3.062 V | 3.062 V |
-| 14 | 2.869 V | 2.869 V | 2.869 V |
-| 13 | 2.675 V | 2.675 V | 2.675 V |
-| 12 | 2.481 V | 2.481 V | 2.481 V |
-| 11 | 2.288 V | 2.288 V | 2.288 V |
-| 10 | 2.094 V | 2.094 V | 2.094 V |
-| 9 | 1.900 V | 1.900 V | 1.900 V |
-| 8 | 1.706 V | **neutral** (0 V chroma) | **neutral** (0 V chroma) |
-| 7 | 1.513 V | 1.513 V | 1.513 V |
-| 6 | 1.319 V | 1.319 V | 1.319 V |
-| 5 | 1.125 V | 1.125 V | 1.125 V |
-| 4 | 0.931 V | 0.931 V | 0.931 V |
-| 3 | 0.738 V | 0.738 V | 0.738 V |
-| 2 | 0.544 V | 0.544 V | 0.544 V |
-| 1 | 0.350 V | 0.350 V | 0.350 V |
-| 0 | 0.156 V | 0.156 V | 0.156 V |
+| DAC value | /Y (4-bit) voltage | U/V (3-bit) voltage |
+|---|---|---|
+| 15 | 3.062 V | — |
+| 14 | 2.869 V | — |
+| 13 | 2.675 V | — |
+| 12 | 2.481 V | — |
+| 11 | 2.288 V | — |
+| 10 | 2.094 V | — |
+| 9 | 1.900 V | — |
+| 8 | 1.706 V | **3.300 V** (neutral) |
+| 7 | 1.513 V | 2.887 V |
+| 6 | 1.319 V | 2.475 V |
+| 5 | 1.125 V | 2.062 V |
+| 4 | 0.931 V | 1.650 V |
+| 3 | 0.738 V | 1.237 V |
+| 2 | 0.544 V | 0.825 V |
+| 1 | 0.350 V | 0.412 V |
+| 0 | 0.156 V | 0.000 V |
 
-### Colour output levels (per ZX Spectrum 16-colour palette)
+### Colour output levels (per ZX Spectrum 16-colour palette, 3-bit U/V quantized)
 
-DAC values are set per attribute byte {BRIGHT, G, R, B} in GRB order.
+DAC values: yn=4-bit, uo/vo=3-bit (quantized: round(x/2)).
 
 | Colour | BRIGHT | yn | uo | vo | /Y voltage | U voltage | V voltage |
 |---|---|---|---|---|---|---|---|
-| Black | 0 | 11 | 8 | 8 | 2.288 V | 1.706 V | 1.706 V |
-| Blue | 0 | 10 | 14 | 7 | 2.094 V | 2.869 V | 1.513 V |
-| Red | 0 | 8 | 6 | 14 | 1.706 V | 1.319 V | 2.869 V |
-| Magenta | 0 | 7 | 12 | 13 | 1.513 V | 2.481 V | 2.675 V |
-| Green | 0 | 6 | 4 | 3 | 1.319 V | 0.931 V | 0.738 V |
-| Cyan | 0 | 5 | 10 | 2 | 1.125 V | 2.094 V | 0.544 V |
-| Yellow | 0 | 4 | 2 | 9 | 0.931 V | 0.544 V | 1.900 V |
-| White | 0 | 3 | 8 | 8 | 0.738 V | 1.706 V | 1.706 V |
-| Black | 1 | 11 | 8 | 8 | 2.288 V | 1.706 V | 1.706 V |
-| Blue | 1 | 9 | 14 | 7 | 1.900 V | 2.869 V | 1.513 V |
-| Red | 1 | 7 | 6 | 14 | 1.513 V | 1.319 V | 2.869 V |
-| Magenta | 1 | 6 | 12 | 13 | 1.319 V | 2.481 V | 2.675 V |
-| Green | 1 | 4 | 4 | 3 | 0.931 V | 0.931 V | 0.738 V |
-| Cyan | 1 | 3 | 10 | 2 | 0.738 V | 2.094 V | 0.544 V |
-| Yellow | 1 | 1 | 2 | 9 | 0.350 V | 0.544 V | 1.900 V |
-| White | 1 | 0 | 8 | 8 | 0.156 V | 1.706 V | 1.706 V |
+| Black | 0 | 11 | 8 | 8 | 2.288 V | 3.300 V | 3.300 V |
+| Blue | 0 | 10 | 7 | 4 | 2.094 V | 2.887 V | 1.650 V |
+| Red | 0 | 8 | 3 | 7 | 1.706 V | 1.237 V | 2.887 V |
+| Magenta | 0 | 7 | 6 | 7 | 1.513 V | 2.475 V | 2.887 V |
+| Green | 0 | 6 | 2 | 2 | 1.319 V | 0.825 V | 0.825 V |
+| Cyan | 0 | 5 | 5 | 1 | 1.125 V | 2.062 V | 0.412 V |
+| Yellow | 0 | 4 | 1 | 5 | 0.931 V | 0.412 V | 2.062 V |
+| White | 0 | 3 | 4 | 4 | 0.738 V | 1.650 V | 1.650 V |
+| Black | 1 | 11 | 8 | 8 | 2.288 V | 3.300 V | 3.300 V |
+| Blue | 1 | 9 | 7 | 4 | 1.900 V | 2.887 V | 1.650 V |
+| Red | 1 | 7 | 3 | 7 | 1.513 V | 1.237 V | 2.887 V |
+| Magenta | 1 | 6 | 6 | 7 | 1.319 V | 2.475 V | 2.887 V |
+| Green | 1 | 4 | 2 | 2 | 0.931 V | 0.825 V | 0.825 V |
+| Cyan | 1 | 3 | 5 | 1 | 0.738 V | 2.062 V | 0.412 V |
+| Yellow | 1 | 1 | 1 | 5 | 0.350 V | 0.412 V | 2.062 V |
+| White | 1 | 0 | 4 | 4 | 0.156 V | 1.650 V | 1.650 V |
 
 ### Composite video generation
 
@@ -134,6 +140,38 @@ V  ──[470Ω]──+
 The /Y output is **inverted**: high DAC value = low voltage = sync tip. The external resistor network adds the chroma subcarrier to the luma. The 75Ω output resistor provides the 75Ω source impedance required by the composite video standard.
 
 For a clean composite output, buffer with an op-amp (e.g. LM733 or equivalent) before the TV input.
+
+---
+
+## RGBi Bonus TTL Outputs
+
+Five TTL-level outputs for direct RGB drive. All are **active during the display area only** (gated off during blanking).
+
+| Pin | Signal | Description |
+|---|---|---|
+| GP43 | R | Red — asserted when pixel colour has R=1 |
+| GP44 | B | Blue — asserted when pixel colour has B=1 |
+| GP45 | G | Green — asserted when pixel colour has G=1 |
+| GP46 | BRIGHT | Intensity — asserted when BRIGHT=1 |
+| GP47 | CSYNC | Composite sync — active low, mirrors HSync AND VSync |
+
+### CSYNC polarity
+
+CSYNC is **active low** (0 during sync, 1 otherwise). It reflects the logical AND of the horizontal and vertical sync pulses — the same composite sync signal used in standard PAL/RGBi circuits. This is the inverse of the sync embedded in /Y.
+
+### RGBi recommended circuit
+
+```
+RP2350B               Monitor / SCART
+GP43 (R)  ───330Ω───► Pin 15 (R)
+GP44 (B)  ───330Ω───► Pin 13 (B)
+GP45 (G)  ───330Ω───► Pin 11 (G)
+GP46 (I)  ───330Ω───► Pin  5 (FBK) via 330Ω (add ~40% to all colours)
+GP47 (CSYNC) ──────► Pin 20 (BLNK) or CSYNC input
+GND        ─────────► Pin 17 (GND)
+```
+
+Series resistors (330Ω) limit current and provide approximately 75Ω source impedance when combined with the 75Ω termination of the monitor.
 
 ### Sync and blanking levels
 

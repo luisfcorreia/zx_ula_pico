@@ -43,6 +43,12 @@ int main(void) {
     for (int i = PIN_YN_BASE; i < PIN_YN_BASE + PIN_YN_COUNT; i++) { gpio_init(i); gpio_set_dir(i, GPIO_OUT); }
     for (int i = PIN_UO_BASE; i < PIN_UO_BASE + PIN_UO_COUNT; i++) { gpio_init(i); gpio_set_dir(i, GPIO_OUT); }
     for (int i = PIN_VO_BASE; i < PIN_VO_BASE + PIN_VO_COUNT; i++) { gpio_init(i); gpio_set_dir(i, GPIO_OUT); }
+    // RGBi bonus TTL outputs
+    gpio_init(PIN_RGB_R); gpio_init(PIN_RGB_G); gpio_init(PIN_RGB_B);
+    gpio_init(PIN_RGB_I); gpio_init(PIN_RGB_CSYNC);
+    gpio_set_dir(PIN_RGB_R, GPIO_OUT); gpio_set_dir(PIN_RGB_G, GPIO_OUT);
+    gpio_set_dir(PIN_RGB_B, GPIO_OUT); gpio_set_dir(PIN_RGB_I, GPIO_OUT);
+    gpio_set_dir(PIN_RGB_CSYNC, GPIO_OUT);
 
     // 3-5. Subsystem init
     video_init();   // PIO0 SM0 tick + colour tables
