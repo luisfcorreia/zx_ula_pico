@@ -6,6 +6,7 @@
 #include "pico/multicore.h"
 #include "hardware/pio.h"
 #include "hardware/gpio.h"
+#include "hardware/resets.h"
 #include <initializer_list>
 
 #include "pinmap.h"
@@ -19,7 +20,10 @@ int main(void) {
     // 1. 252 MHz
     clock_init_252mhz();
 
-    // 2. GPIO setup
+    // 2. Hold SPI0 and I2C0 in reset so they never drive their pins
+    reset_block_mask(RESETS_RESET_SPI0_BITS | RESETS_RESET_I2C0_BITS);
+
+    // 3. GPIO setup
     // Data bus GP10-GP17: inputs, pull-up
     for (int i = PIN_D_BASE; i < PIN_D_BASE + PIN_D_COUNT; i++) {
         gpio_init(i); gpio_set_dir(i, GPIO_IN); gpio_pull_up(i);
