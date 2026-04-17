@@ -10,6 +10,9 @@
 //   5. Update all state variables
 // =============================================================================
 
+// DEBUG: uncomment to force visible test pattern (alternating sync/white)
+// #define DEBUG_FORCE_PATTERN 1
+
 #include "video.h"
 #include "pinmap.h"
 #include "dram/dram.h"
@@ -74,9 +77,17 @@ volatile bool ula_fetch_window = false;
         bool flash_pixel = ((AttrOut >> 7) & 1u) && ((FlashCnt >> 4) & 1u);
         bool Pixel = ((SRegister >> 7) & 1u) ^ flash_pixel;
 
-        // CSYNC: 0 during hsync or vsync, 1 otherwise
-        uint32_t csync_bit = (uint32_t)(!(HSync_n & VSync_n)) << 15;
+        // CSYNC: active-low, 0 during hsync or vsync, 1 otherwise
+        uint32_t csync_bit = (uint32_t)(HSync_n && VSync_n) << 15;
 
+#ifdef DEBUG_FORCE_PATTERN
+        // Alternating sync/white pattern for testing
+        static uint32_t frame_count = 0;
+        uint32_t vid_word = (frame_count++ < 100) ? sync_word : build_video_word(0, 4, 4, 0, 0, 0, 0, 0);
+        (void)csync_bit;
+        (void)active_video;
+        (void)sync_active;
+#else
         uint32_t vid_word;
         if (sync_active) {
             vid_word = sync_word | csync_bit;  // sync_word already has CSYNC=0
@@ -87,12 +98,15 @@ volatile bool ula_fetch_window = false;
             uint8_t paper = (AttrOut >> 3) & 7u;
             uint8_t col   = Pixel ? ink : paper;
             uint8_t lut   = col | ((AttrOut >> 3) & 8u);  // {BRIGHT,G,R,B}
-            uint32_t rgb_bit = (((uint32_t)AttrOut >> 1) & 0x7u)
-                              | (((uint32_t)AttrOut >> 3) & 0x8u);
+            uint32_t rgb_bit = (((uint32_t)lut >> 1) & 1u) << 11  // R
+                                          | (((uint32_t)lut >> 2) & 1u) << 12  // G
+                                          | (((uint32_t)lut)      & 1u) << 13  // B
+                                          | (((uint32_t)lut >> 3) & 1u) << 14;  // BRIGHT
             vid_word = colour_table[lut & 0xFu] | rgb_bit | csync_bit;
         } else {
             vid_word = border_table[BorderColor & 7u] | csync_bit;
         }
+#endif
         ula_gpio_put_hi(VIDEO_GPIO_HI_MASK, vid_word);
 
         // --- DRAM control (GP0-GP9) ---

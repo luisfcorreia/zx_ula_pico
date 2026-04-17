@@ -45,7 +45,7 @@ static inline void release_dbus(void) {
 static uint8_t port_fe_read(void) {
     uint8_t ear = gpio_get(PIN_SOUND) ? 1u : 0u;
     uint8_t t   = (uint8_t)((gpio_get_all() >> PIN_T_BASE) & 0x1Fu);
-    return 0xB0u | (ear << 6) | t;
+    return 0xA0u | (ear << 6) | t;
 }
 
 static void port_fe_write(uint8_t d) {

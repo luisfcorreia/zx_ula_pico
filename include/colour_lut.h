@@ -10,7 +10,7 @@
 //
 // YN: 4-bit (0–15), UO/VO: 3-bit (0–7), quantized from 4-bit original.
 // Quantization: round(x / 2) maps 4-bit (0–15) to 3-bit (0–7).
-// Neutral (8) stays at 8 (midpoint of 0–7 range).
+// Neutral (4) stays at 4 (midpoint of 0–7 range).
 //
 // =============================================================================
 //
@@ -41,8 +41,8 @@
 // =============================================================================
 
 static const uint32_t colour_lut[16] = {
-    // {I,G,R,B}   Colour       yn  uo  vo    (uo/vo 3-bit quantized: round(x/2))
-    (11u<<8)|(8u<<4)|(8u),  // 0000  Black  (normal)
+    // {I,G,R,B}   Colour       yn  uo  vo    (uo/vo 3-bit: neutral=4, quantized: round(x/2))
+    (11u<<8)|(4u<<4)|(4u),  // 0000  Black  (normal)
     (10u<<8)|(7u<<4)|(4u),  // 0001  Blue   (normal)
     ( 8u<<8)|(3u<<4)|(7u),  // 0010  Red    (normal)
     ( 7u<<8)|(6u<<4)|(7u),  // 0011  Magenta(normal)
@@ -50,7 +50,7 @@ static const uint32_t colour_lut[16] = {
     ( 5u<<8)|(5u<<4)|(1u),  // 0101  Cyan   (normal)
     ( 4u<<8)|(1u<<4)|(5u),  // 0110  Yellow (normal)
     ( 3u<<8)|(4u<<4)|(4u),  // 0111  White  (normal)
-    (11u<<8)|(8u<<4)|(8u),  // 1000  Black  (bright — same as normal)
+    (11u<<8)|(4u<<4)|(4u),  // 1000  Black  (bright — same as normal)
     ( 9u<<8)|(7u<<4)|(4u),  // 1001  Blue   (bright)
     ( 7u<<8)|(3u<<4)|(7u),  // 1010  Red    (bright)
     ( 6u<<8)|(6u<<4)|(7u),  // 1011  Magenta(bright)
@@ -66,5 +66,5 @@ static inline uint8_t lut_vo(uint8_t idx) { return (colour_lut[idx & 0xF]      )
 
 #define YN_SYNC_TIP   15u
 #define YN_BLACK      11u
-#define UO_NEUTRAL     8u
-#define VO_NEUTRAL     8u
+#define UO_NEUTRAL     4u
+#define VO_NEUTRAL     4u
