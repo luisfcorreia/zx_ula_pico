@@ -64,7 +64,7 @@ static inline uint8_t lut_yn(uint8_t idx) { return (colour_lut[idx & 0xF] >> 8) 
 static inline uint8_t lut_uo(uint8_t idx) { return (colour_lut[idx & 0xF] >> 4) & 7u; }
 static inline uint8_t lut_vo(uint8_t idx) { return (colour_lut[idx & 0xF]      ) & 7u; }
 
-#define YN_SYNC_TIP   15u
-#define YN_BLACK      11u
+#define YN_SYNC_TIP   15u   // highest DAC (sync)
+#define YN_BLACK      11u   // black level
 #define UO_NEUTRAL     4u
 #define VO_NEUTRAL     4u

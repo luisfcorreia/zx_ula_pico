@@ -68,6 +68,9 @@
 #define PIO0_CLK_DIV             36
 #define SYS_CYCLES_PER_PIXEL     36
 
+// PIO video mode: 0=C++ loop, 1=DMA+PIO
+#define USE_PIO_VIDEO           1
+
 // Raster timing (from Verilog, 448 clocks/line)
 #define HC_MAX          447
 #define VC_MAX          311

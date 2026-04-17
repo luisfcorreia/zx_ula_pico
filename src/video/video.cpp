@@ -1,17 +1,12 @@
 // =============================================================================
-// video.cpp — Core 0 pixel loop: faithful C simulation of ula_zx48k.v
+// video.cpp — Core 0 pixel loop
 //
-// Every iteration = one negedge clk7 event (7 MHz).
-// Pattern per iteration:
-//   1. Gate on PIO0 SM0 RX FIFO tick
-//   2. Output current registered state to GPIO
-//   3. Read inputs (D bus, bus control signals)
-//   4. Compute all next-state values (Verilog <= assignments)
-//   5. Update all state variables
+// Optimized for 36 cycles/pixel at 7 MHz.
+// Fast path: gate → lut → GPIO write → shift → counter
 // =============================================================================
 
-// DEBUG: uncomment to force visible test pattern (alternating sync/white)
-// #define DEBUG_FORCE_PATTERN 1
+// DEBUG: uncomment to generate Y ramp
+// #define DEBUG_Y_RAMP 1
 
 #include "video.h"
 #include "pinmap.h"
@@ -31,6 +26,7 @@ extern uint32_t black_word;
 extern volatile uint8_t shared_border_color;
 volatile bool ula_fetch_window = false;
 
+__attribute__((optimize("O3")))
 [[noreturn]] void video_run(void) {
 
     // ---- Registered state (mirrors every Verilog reg) ----
@@ -80,13 +76,15 @@ volatile bool ula_fetch_window = false;
         // CSYNC: active-low, 0 during hsync or vsync, 1 otherwise
         uint32_t csync_bit = (uint32_t)(HSync_n && VSync_n) << 15;
 
-#ifdef DEBUG_FORCE_PATTERN
-        // Alternating sync/white pattern for testing
-        static uint32_t frame_count = 0;
-        uint32_t vid_word = (frame_count++ < 100) ? sync_word : build_video_word(0, 4, 4, 0, 0, 0, 0, 0);
-        (void)csync_bit;
-        (void)active_video;
+#ifdef DEBUG_Y_RAMP
+        // Y ramp based on horizontal position, shows everywhere including sync/blank
+        uint32_t vid_word = build_video_word((uint8_t)(hc & 0xFu), 4, 4, 0, 0, 0, 0, 1);
         (void)sync_active;
+        (void)active_video;
+        (void)Pixel;
+        (void)flash_pixel;
+        (void)csync_bit;
+        (void)vc;
 #else
         uint32_t vid_word;
         if (sync_active) {

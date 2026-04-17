@@ -1,0 +1,30 @@
+; =============================================================================
+; video.pio — 7 MHz DMA-driven video output
+;
+; DMA feeds 32-bit pixel words into the TX FIFO at 7 MHz rate.
+; SM reads from TX FIFO and writes to GPIO HI bus.
+;
+; gpio_hi_out (bits 1-15 = GP33-47):
+;   bit 1-4  : Y[3:0]  (4-bit luma)
+;   bit 5-7  : U[2:0]  (3-bit Cb)  
+;   bit 8-10 : V[2:0]  (3-bit Cr)
+;   bit 11   : R
+;   bit 12   : G
+;   bit 13   : B
+;   bit 14   : I (BRIGHT)
+;   bit 15   : CSYNC (active low)
+;
+; DMA config: word32, size=32, no wrap, increment source
+; =============================================================================
+
+.program video_dma
+
+; Output 32-bit word from TX FIFO to GPIO pins
+; Autopull when FIFO has <8 words, threshold=8
+; Clock divisor gives 7 MHz
+
+.wrap_target
+    out pins, 32      ; output 32-bit word to GPIO pins
+.wrap
+
+; Side-set pin can signal DMA trigger if needed
