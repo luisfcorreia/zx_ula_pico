@@ -123,23 +123,9 @@ DAC values: yn=4-bit, uo/vo=3-bit (quantized: round(x/2)).
 | Yellow | 1 | 1 | 1 | 5 | 0.350 V | 0.412 V | 2.062 V |
 | White | 1 | 0 | 4 | 4 | 0.156 V | 1.650 V | 1.650 V |
 
-### Composite video generation
+### Composite video
 
-Route /Y, U, V to three separate R-2R ladders. Combine the three DAC outputs with external resistors to produce a composite video signal:
-
-```
-/Y ──[75Ω]──+── COMP
-U  ──[470Ω]──+── COMP
-V  ──[470Ω]──+
-             |
-           [75Ω]
-             |
-            GND
-```
-
-The /Y output is **inverted**: high DAC value = low voltage = sync tip. The external resistor network adds the chroma subcarrier to the luma. The 75Ω output resistor provides the 75Ω source impedance required by the composite video standard.
-
-For a clean composite output, buffer with an op-amp (e.g. LM733 or equivalent) before the TV input.
+Composite video is handled by the existing ZX Spectrum PCB circuit. The /Y, U, V outputs connect directly to the original circuit.
 
 ---
 

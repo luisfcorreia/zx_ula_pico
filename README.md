@@ -1,99 +1,105 @@
 # ZX Spectrum 48K ULA — RP2350B Drop-in Replacement
 
-## Project goal
+Replace the Ferranti 6C001E-7 ULA with an RP2350B on an unmodified ZX Spectrum 48K PCB. Mount the RP2350B on the same 40-pin DIP footprint.
 
-Replace the Ferranti 6C001E-7 ULA chip in an unmodified ZX Spectrum 48K PCB with an RP2350B. 
+## Build
 
-The Pico boots before the Z80 gets a clock (ULA drives Z80 clock, so no clock until Pico is ready). 
+```bash
+mkdir -p build && cd build
+cmake ..
+make
+```
 
-RP2350B is 5V tolerant — no level shifting needed. Target 252 MHz overclock with no voltage increase planned.
+Flash `build/zx_ula_pico.uf2` to the device.
 
-## Hardware facts established
+Requirements:
+- Board: `weact_studio_rp2350b_core`, platform: `rp2350-arm-s`
+- pico-sdk is a git submodule: `git clone --recursive` or `git submodule update --init`
+- USB and UART are disabled (no stdio)
 
-* No pin 39 (14 MHz crystal) — RP2350B generates its own clocks via PLL
-* 252 MHz system clock — 12 MHz XOSC × 126 ÷ 6 = 252 MHz = 36 × 7 MHz (exact integer ratio, zero jitter pixel clock)
-* 7 MHz pixel clock — PIO divider = 36
-* 3.5 MHz CPU clock — contention-gated, driven by PIO
-* RP2350B has 48 GPIO — all allocated, tight but sufficient
-* 3.3V outputs — 4-bit R-2R DAC per YUV channel, neutral = code 8 = 1.65V
-* YUV lookup tables — 16 entries, indexed by {BRIGHT,G,R,B}, values pending oscilloscope measurement on real 6C001E-7
+## Clocks
+
+Custom 252 MHz PLL: VCO=1512 MHz, POSTDIV1=6, POSTDIV2=1. 252 MHz = 36 x 7 MHz — exact integer ratio gives zero-jitter pixel clock.
 
 ## Architecture
 
-|Block|Resource|Responsibility|
-|-|-|-|
-|Core 0|ARM Cortex-M33|Raster loop, runs forever, one iteration per pixel clock (36 sys cycles budget)|
-|Core 1|ARM Cortex-M33|Port 0xFE read/write, border colour, sound, flash counter, keyboard|
-|PIO0 SM0|7 MHz|Sync generator (HSync, VSync, /INT)|
-|PIO0 SM1|7 MHz|Pixel shift register, RGBi output|
-|PIO0 SM2|7 MHz|YUV DAC output|
-|PIO0 SM3|7 MHz|CPU clock, contention-gated|
-|PIO1 SM0|252 MHz|DRAM controller (RAS/CAS/WE, 4 ns resolution)|
-|PIO1 SM1|252 MHz|D bus capture (DataLatch/AttrLatch timing)|
-|PIO1 SM2|252 MHz|RAS-only refresh cycles|
+| Resource | Responsibility |
+|---|---|
+| Core 0 | Raster loop — one iteration per 7 MHz pixel clock tick |
+| Core 1 | Port 0xFE read/write, CPU contention, border colour, sound, keyboard |
+| PIO0 SM0 | 7 MHz tick generator — gates Core 0 pixel loop via RX FIFO |
+| PIO0 SM3 | 3.5 MHz CPU clock, contention-gated (disabled during ULA fetch) |
+| PIO1 | Reserved |
 
+Core 0 drives all DRAM signals directly via SIO GPIO. No PIO DRAM controller yet.
 
+Reference Verilog: `reference/ula_zx48k.v`.
 
-## GPIO pin map
+## GPIO Pin Map
 
-* GP0–GP6   RA[6:0]      DRAM multiplexed address (output)
-* GP7       /RAS         DRAM row strobe (output)
-* GP8       /CAS         DRAM col strobe (output)
-* GP9       /WE          DRAM write enable (output)
-* GP10–GP17 D[7:0]       Data bus (bidirectional)
-* GP18      /WR          Z80 write (input)
-* GP19      /RD          Z80 read (input)
-* GP20      /MREQ        Z80 memory request (input)
-* GP21      /IO-ULA      Pre-decoded port select A0|/IORQ (input)
-* GP22      A14          Z80 address bit 14 (input)
-* GP23      A15          Z80 address bit 15 (input)
-* GP24      /INT         Interrupt to Z80 (output)
-* GP25      CLOCK        3.5 MHz CPU clock (output)
-* GP26      /ROM_CS      ROM chip select (output)
-* GP27      SOUND        EAR in / MIC+SPK out (bidirectional)
-* GP28–GP32 T[4:0]       Keyboard columns (input)
-* GP33–GP36 yn[3:0]      /Y DAC (output)
-* GP37–GP40 uo[3:0]      U Cb DAC (output)
-* GP41–GP44 vo[3:0]      V Cr DAC (output)
-* GP45      R            RGBi Red bonus (output)
-* GP46      G            RGBi Green bonus (output)
-* GP47      B            RGBi Blue bonus (output)
-* some others still needing work
+| Pins | Function | Notes |
+|---|---|---|
+| GP0–GP6 | DRAM address A[6:0] | Output |
+| GP7 | /RAS | DRAM row strobe, output |
+| GP8 | /CAS | DRAM column strobe, output |
+| GP9 | /WE | DRAM write enable, output |
+| GP10–GP17 | D[7:0] | Data bus, bidirectional |
+| GP18 | /WR | Z80 write strobe, input |
+| GP19 | /RD | Z80 read strobe, input |
+| GP20 | /MREQ | Z80 memory request, input |
+| GP21 | /IO-ULA | Pre-decoded port select, input |
+| GP22 | A14 | Z80 address bit 14, input |
+| GP23 | A15 | Z80 address bit 15, input |
+| GP24 | /INT | Interrupt to Z80, output |
+| GP25 | /ROM CS | ROM chip select, output |
+| GP26 | CLOCK | 3.5 MHz CPU clock, output |
+| GP27 | SOUND | EAR in / MIC+SPK out, bidirectional |
+| GP28–GP32 | T[4:0] | Keyboard columns, input |
+| GP33–GP36 | YN[3:0] | /Y luma DAC (4-bit R-2R), output |
+| GP37–GP39 | UO[2:0] | U Cb DAC (3-bit R-2R), output |
+| GP40–GP42 | VO[2:0] | V Cr DAC (3-bit R-2R), output |
+| GP43 | R | RGBi bonus, TTL, output |
+| GP44 | B | RGBi bonus, TTL, output |
+| GP45 | G | RGBi bonus, TTL, output |
+| GP46 | BRIGHT | RGBi bonus, TTL, output |
+| GP47 | CSYNC | RGBi bonus, composite sync, active low, output |
 
-## Project file structure
+Pins 13, 14, 40 (power/ground) handled by PCB as before. Pin 39 (14 MHz crystal input) not used — RP2350B generates all clocks internally.
+
+## Video Output
+
+Two output modes:
+
+**Composite video**: /Y, U, V go to three R-2R resistor ladder DACs on the ZX Spectrum PCB. The existing ZX Spectrum resistor network produces composite video from these signals. See `HARDWARE.md` for DAC levels.
+
+**RGBi bonus**: Five TTL outputs (R, G, B, BRIGHT, CSYNC) on GP43–GP47. Active during display area only. CSYNC is HSync AND VSync, active low — the inverse of the sync embedded in /Y.
+
+See `HARDWARE.md` for DAC values, colour palette, and recommended RGBi circuit.
+
+## File Structure
+
 ```
-zx_pico_ula/
+.
 ├── CMakeLists.txt
+├── HARDWARE.md           — pinout, DAC levels, RGBi circuit
+├── reference/
+│   └── ula_zx48k.v      — reference Verilog model
 ├── include/
-│   ├── pinmap.h          — all pin numbers and timing constants
-│   └── colour_lut.h      — 16-entry YUV lookup table (TODO: scope values)
+│   ├── pinmap.h          — GPIO pin assignments and timing constants
+│   └── colour_lut.h      — 16-entry YUV palette (3-bit U/V quantized)
 └── src/
-    ├── main.cpp           — PLL init, GPIO init, PIO load, core launch
+    ├── main.cpp          — PLL init, GPIO setup, core launch
     ├── clock/
-    │   └── clock.cpp      — 252 MHz PLL configuration
+    │   └── clock.cpp     — 252 MHz PLL configuration
     ├── video/
-    │   ├── video.cpp      — Core 0 raster loop (main engine)
-    │   ├── sync.pio       — HSync/VSync/INT generator
-    │   └── pixel.pio      — pixel shift register + RGBi
-    ├── dram/
-    │   ├── dram.cpp       — PIO1 init stub (TODO: complete)
-    │   └── dram.pio       — RAS/CAS/WE sequencer at 252 MHz
+    │   ├── video.cpp     — Core 0 raster loop
+    │   └── video_init.cpp— PIO0 SM0 init, colour tables
     ├── cpu/
-    │   ├── cpu.cpp        — PIO0 SM3 init stub (TODO: complete)
-    │   └── cpu_clock.pio  — contention-gated 3.5 MHz clock
+    │   ├── cpu.cpp       — PIO0 SM3 init (3.5 MHz clock)
+    │   ├── sync.pio      — 7 MHz tick generator
+    │   └── cpu_clock.pio — 3.5 MHz CPU clock
+    ├── dram/
+    │   └── dram.cpp      — DRAM GPIO init (SIO, not PIO)
     └── io/
-        └── io.cpp         — Core 1: port 0xFE, keyboard, sound, flash
-        
+        └── io.cpp        — Core 1: port 0xFE, contention, keyboard, sound
 ```
-
-## What works / what's next
-Designed and stubbed:
-
-Full GPIO map and direction logic
-252 MHz PLL init
-Core 0 raster loop structure with correct hc/vc counters, DRAM phase dispatch, pixel pipeline, colour LUT lookup, single masked GPIO write for all video outputs
-Core 1 port 0xFE read/write, sound pin direction switching, flash counter
-All four PIO programs (logic correct, not yet assembled/tested)
-DRAM timing constants verified against 4116-4 datasheet
-
-Creating video frame
