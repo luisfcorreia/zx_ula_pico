@@ -28,7 +28,7 @@ Custom 252 MHz PLL: VCO=1512 MHz, POSTDIV1=6, POSTDIV2=1. 252 MHz = 36 x 7 MHz �
 | Core 0 | Raster loop — one iteration per 7 MHz pixel clock tick |
 | Core 1 | Port 0xFE read/write, CPU contention, border colour, sound, keyboard |
 | PIO0 SM0 | 7 MHz tick generator — gates Core 0 pixel loop via RX FIFO |
-| PIO0 SM3 | 3.5 MHz CPU clock, contention-gated (disabled during ULA fetch) |
+| PIO0 SM1 | 3.5 MHz CPU clock, contention-gated (disabled during ULA fetch) |
 | PIO1 | Reserved |
 
 Core 0 drives all DRAM signals directly via SIO GPIO. No PIO DRAM controller yet.
@@ -95,7 +95,7 @@ See `HARDWARE.md` for DAC values, colour palette, and recommended RGBi circuit.
     │   ├── video.cpp     — Core 0 raster loop
     │   └── video_init.cpp— PIO0 SM0 init, colour tables
     ├── cpu/
-    │   ├── cpu.cpp       — PIO0 SM3 init (3.5 MHz clock)
+    │   ├── cpu.cpp       — PIO0 SM1 init (3.5 MHz clock)
     │   ├── sync.pio      — 7 MHz tick generator
     │   └── cpu_clock.pio — 3.5 MHz CPU clock
     ├── dram/
@@ -103,3 +103,11 @@ See `HARDWARE.md` for DAC values, colour palette, and recommended RGBi circuit.
     └── io/
         └── io.cpp        — Core 1: port 0xFE, contention, keyboard, sound
 ```
+
+## Credits
+
+Reference Verilog model: `reference/ula_zx48k.v`, converted from original VHDL by Miguel Angel Rodriguez Jodar (Dept. Architecture and Computing Technology, University of Seville), created 2012-04-04.
+
+LLM assistance: Claude.ai Sonnet 4.6 Adaptive (initial conversion); big-pickle (opencode/big-pickle).
+
+Supervision: Luis Correia.
