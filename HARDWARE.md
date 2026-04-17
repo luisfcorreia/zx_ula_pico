@@ -44,8 +44,8 @@ Direct drop-in: RP2350B mounts on the same 40-pin DIP footprint as the Ferranti 
 | 38 | /MREQ | in | GP20 | Z80 memory request |
 | 39 | Q | in | - | 14 MHz crystal — not used, RP2350B generates own clocks |
 | — | R (bonus) | out | GP43 | RGBi TTL, active during display only |
-| — | G (bonus) | out | GP45 | RGBi TTL, active during display only |
-| — | B (bonus) | out | GP44 | RGBi TTL, active during display only |
+| — | G (bonus) | out | GP44 | RGBi TTL, active during display only |
+| — | B (bonus) | out | GP45 | RGBi TTL, active during display only |
 | — | BRIGHT (bonus) | out | GP46 | RGBi TTL, active during display only |
 | — | CSYNC (bonus) | out | GP47 | RGBi TTL, composite sync (HSync AND VSync, active low) |
 | — | — | — | — | (no spare pins remaining) |
@@ -131,27 +131,32 @@ Composite video is handled by the existing ZX Spectrum PCB circuit. The /Y, U, V
 
 ## RGBi Bonus TTL Outputs
 
-Five TTL-level outputs for direct RGB drive. All are **active during the display area only** (gated off during blanking).
+Five TTL-level outputs for direct RGB drive. All are part of the same 15-bit GPIO port (GP33-47) — written in a single `ula_gpio_put_hi()` call per pixel tick alongside YUV.
 
-| Pin | Signal | Description |
-|---|---|---|
-| GP43 | R | Red — asserted when pixel colour has R=1 |
-| GP44 | B | Blue — asserted when pixel colour has B=1 |
-| GP45 | G | Green — asserted when pixel colour has G=1 |
-| GP46 | BRIGHT | Intensity — asserted when BRIGHT=1 |
-| GP47 | CSYNC | Composite sync — active low, mirrors HSync AND VSync |
+| Pin | Signal | gpio_hi_out bit | Description |
+|---|---|---|---|
+| GP43 | R | bit 11 | Red — asserted when pixel colour has R=1 |
+| GP44 | G | bit 12 | Green — asserted when pixel colour has G=1 |
+| GP45 | B | bit 13 | Blue — asserted when pixel colour has B=1 |
+| GP46 | BRIGHT | bit 14 | Intensity — asserted when BRIGHT=1 |
+| GP47 | CSYNC | bit 15 | Composite sync — active low |
 
 ### CSYNC polarity
 
-CSYNC is **active low** (0 during sync, 1 otherwise). It reflects the logical AND of the horizontal and vertical sync pulses — the same composite sync signal used in standard PAL/RGBi circuits. This is the inverse of the sync embedded in /Y.
+CSYNC is **active low** (0 during sync, 1 otherwise). It follows the PAL composite sync waveform:
+- HSync pulse: CSYNC=0 during hc=344-375 (every line)
+- VSync pulse: CSYNC=0 during vc=248-251 (longer pulse with equalising half-lines)
+- Active display and blanking: CSYNC=1
+
+This mirrors `!(HSync_n & VSync_n)`, the same composite sync signal embedded in /Y.
 
 ### RGBi recommended circuit
 
 ```
 RP2350B               Monitor / SCART
 GP43 (R)  ───330Ω───► Pin 15 (R)
-GP44 (B)  ───330Ω───► Pin 13 (B)
-GP45 (G)  ───330Ω───► Pin 11 (G)
+GP44 (G)  ───330Ω───► Pin 11 (G)
+GP45 (B)  ───330Ω───► Pin 13 (B)
 GP46 (I)  ───330Ω───► Pin  5 (FBK) via 330Ω (add ~40% to all colours)
 GP47 (CSYNC) ──────► Pin 20 (BLNK) or CSYNC input
 GND        ─────────► Pin 17 (GND)

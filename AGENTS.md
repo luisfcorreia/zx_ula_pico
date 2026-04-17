@@ -24,7 +24,7 @@ Flash `build/zx_ula_pico.uf2` to the device.
 | Core 0 | Raster loop — one iteration per 7 MHz pixel clock tick |
 | Core 1 | Port 0xFE I/O, contention, border, keyboard, sound |
 | PIO0 SM0 | 7 MHz tick generator (gates Core 0 loop) |
-| PIO0 SM3 | 3.5 MHz CPU clock, contention-gated |
+| PIO0 SM1 | 3.5 MHz CPU clock, contention-gated |
 | PIO1 | Reserved for DRAM controller (not yet active) |
 
 Core 0 drives all DRAM signals directly via SIO GPIO in the pixel loop — no PIO DRAM controller yet.

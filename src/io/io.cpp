@@ -77,7 +77,7 @@ static void port_fe_write(uint8_t d) {
 
         if (contend) {
             if (!clock_held) {
-                // Wait until clock is HIGH then freeze SM3 (hold HIGH = wait state)
+                // Wait until clock is HIGH then freeze SM1 (hold HIGH = wait state)
                 while (!gpio_get(PIN_CLOCK)) tight_loop_contents();
                 pio_sm_set_enabled(pio0, SM_CPUCLK, false);
                 clock_held = true;

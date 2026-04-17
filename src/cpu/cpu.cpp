@@ -2,7 +2,7 @@
 // cpu.cpp — CPU clock PIO initialisation
 //
 // Pure free-running 3.5 MHz square wave on PIN_CLOCK (GP25).
-// PIO0 SM3, clkdiv=36 → 7 MHz; two SET instructions = 3.5 MHz output.
+// PIO0 SM1, clkdiv=36 → 7 MHz; two SET instructions = 3.5 MHz output.
 // No FIFO, no autopull, no DMA — clock starts immediately with the SM.
 //
 // Contention is applied externally by Core 1 (io.cpp):
@@ -36,5 +36,5 @@ void cpu_init(void) {
     pio_gpio_init(pio0, PIN_CLOCK);
     pio_sm_set_consecutive_pindirs(pio0, SM_CPUCLK, PIN_CLOCK, 1, true);
 
-    // SM3 started by main.cpp via pio_enable_sm_mask_in_sync().
+    // SM1 started by main.cpp via pio_enable_sm_mask_in_sync().
 }

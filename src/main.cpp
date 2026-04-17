@@ -53,10 +53,10 @@ int main(void) {
     // 3-5. Subsystem init
     video_init();   // PIO0 SM0 tick + colour tables
     dram_init();    // GP0-GP9 as SIO outputs
-    cpu_init();     // PIO0 SM3 cpu_clock
+    cpu_init();     // PIO0 SM1 cpu_clock
 
-    // 6. Start PIO0 SM0 (tick) and SM3 (clock) simultaneously
-    pio_enable_sm_mask_in_sync(pio0, (1u << 0) | (1u << 3));
+    // 6. Start PIO0 SM0 (tick) and SM1 (clock) simultaneously
+    pio_enable_sm_mask_in_sync(pio0, (1u << 0) | (1u << 1));
 
     // 7. Launch Core 1
     multicore_launch_core1(io_core1_entry);

@@ -74,19 +74,24 @@ volatile bool ula_fetch_window = false;
         bool flash_pixel = ((AttrOut >> 7) & 1u) && ((FlashCnt >> 4) & 1u);
         bool Pixel = ((SRegister >> 7) & 1u) ^ flash_pixel;
 
+        // CSYNC: 0 during hsync or vsync, 1 otherwise
+        uint32_t csync_bit = (uint32_t)(!(HSync_n & VSync_n)) << 15;
+
         uint32_t vid_word;
         if (sync_active) {
-            vid_word = sync_word;
+            vid_word = sync_word | csync_bit;  // sync_word already has CSYNC=0
         } else if (!active_video) {
-            vid_word = black_word;
+            vid_word = black_word | csync_bit;  // black_word already has CSYNC=1
         } else if (!VidEN_n) {
             uint8_t ink   = AttrOut & 7u;
             uint8_t paper = (AttrOut >> 3) & 7u;
             uint8_t col   = Pixel ? ink : paper;
             uint8_t lut   = col | ((AttrOut >> 3) & 8u);  // {BRIGHT,G,R,B}
-            vid_word = colour_table[lut & 0xFu];
+            uint32_t rgb_bit = (((uint32_t)AttrOut >> 1) & 0x7u)
+                              | (((uint32_t)AttrOut >> 3) & 0x8u);
+            vid_word = colour_table[lut & 0xFu] | rgb_bit | csync_bit;
         } else {
-            vid_word = border_table[BorderColor & 7u];
+            vid_word = border_table[BorderColor & 7u] | csync_bit;
         }
         ula_gpio_put_hi(VIDEO_GPIO_HI_MASK, vid_word);
 
@@ -101,10 +106,6 @@ volatile bool ula_fetch_window = false;
 
         // --- /INT ---
         gpio_put(PIN_INT_N, INT_r ? 1 : 0);
-
-        // --- CSYNC (RGBi bonus) — HSync AND VSync, active low ---
-        // HSync_n=0 during HSYNC, VSync_n=0 during VSYNC
-        gpio_put(PIN_RGB_CSYNC, !(HSync_n & VSync_n));
 
         // --- Contention window flag for Core 1 ---
         // display_phase = hc[3] & ~hc[2] = phases 8-11

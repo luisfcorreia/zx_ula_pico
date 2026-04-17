@@ -1,6 +1,6 @@
 ; =============================================================================
 ; cpu_clock.pio — 3.5 MHz CPU clock, free-running
-; PIO0 SM3, clkdiv=36 → 7 MHz SM clock (1 instruction = 142.86 ns)
+; PIO0 SM1, clkdiv=36 → 7 MHz SM clock (1 instruction = 142.86 ns)
 ;
 ; Two instructions per full cycle = 285.71 ns period = 3.5 MHz exactly.
 ; No FIFO, no autopull, no DMA — SM runs indefinitely from the moment

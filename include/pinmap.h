@@ -44,7 +44,7 @@
 // U  Cb DAC         — GP37–GP39 (3-bit)
 // V  Cr DAC         — GP40–GP42 (3-bit)
 //
-// RGBi bonus TTL outputs — GP43 (R), GP44 (B), GP45 (G), GP46 (I), GP47 (CSYNC)
+// RGBi bonus TTL outputs — GP43 (R), GP44 (G), GP45 (B), GP46 (I), GP47 (CSYNC)
 //                          (active during active display area only)
 
 #define PIN_YN_BASE     33
@@ -57,8 +57,8 @@
 #define PIN_VO_COUNT    3
 
 #define PIN_RGB_R       43
-#define PIN_RGB_G       45
-#define PIN_RGB_B       44
+#define PIN_RGB_G       44
+#define PIN_RGB_B       45
 #define PIN_RGB_I       46
 #define PIN_RGB_CSYNC   47
 
@@ -86,10 +86,9 @@
 #define ACTIVE_LINES    192
 
 // High GPIO bank (GP32 = bit 0)
-// GP33=bit1 .. GP36=bit4  (YN[3:0])
-// GP37=bit5 .. GP39=bit7  (UO[2:0])
-// GP40=bit8 .. GP42=bit10 (VO[2:0])
+// GP33=bit1  .. GP36=bit4  (YN[3:0])
+// GP37=bit5  .. GP39=bit7  (UO[2:0])
+// GP40=bit8  .. GP42=bit10 (VO[2:0])
+// GP43=bit11 (R) GP44=bit12 (G) GP45=bit13 (B) GP46=bit14 (I) GP47=bit15 (CSYNC)
 #define VIDEO_GPIO_HI_BASE  32u
-#define VIDEO_GPIO_HI_MASK  ((0xFu << (PIN_YN_BASE - VIDEO_GPIO_HI_BASE)) | \
-                             (0x7u << (PIN_UO_BASE - VIDEO_GPIO_HI_BASE)) | \
-                             (0x7u << (PIN_VO_BASE - VIDEO_GPIO_HI_BASE)))
+#define VIDEO_GPIO_HI_MASK  (0x7FFFu << 1)   // bits 1-15 = GP33-47
