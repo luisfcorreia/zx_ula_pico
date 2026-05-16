@@ -1,7 +1,5 @@
 #pragma once
 #include <stdint.h>
-#include "hardware/structs/sio.h"
-#include "hardware/address_mapped.h"
 #include "pinmap.h"
 #include "colour_lut.h"
 
@@ -40,6 +38,14 @@ static inline uint32_t build_black_word(void) {
     return build_video_word(YN_BLACK, UO_NEUTRAL, VO_NEUTRAL, 0, 0, 0, 0, 1u);
 }
 
-static inline void ula_gpio_put_hi(uint32_t mask, uint32_t value) {
-    hw_write_masked(&sio_hw->gpio_hi_out, value, mask);
-}
+// Buffer sizes
+#define PIXELS_PER_LINE 448
+#define CAPTURE_BYTES   64    // 32 pixel + 32 attribute bytes
+#define CAPTURE_BUFS    2
+#define VIDEO_BUF_WORDS PIXELS_PER_LINE
+#define VIDEO_BUFS      2
+
+// Extern buffers (allocated in video_init.cpp)
+extern uint8_t  capture_buf[CAPTURE_BUFS][CAPTURE_BYTES];
+extern uint32_t video_buf[VIDEO_BUFS][VIDEO_BUF_WORDS];
+extern uint32_t dram_base_lut[16];  // 16-entry DRAM base LUT (ULA fetch + refresh)

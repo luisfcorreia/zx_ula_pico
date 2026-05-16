@@ -24,6 +24,7 @@ add_executable(zx_ula_pico
 pico_generate_pio_header(zx_ula_pico ${CMAKE_CURRENT_SOURCE_DIR}/src/cpu/sync.pio OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 pico_generate_pio_header(zx_ula_pico ${CMAKE_CURRENT_SOURCE_DIR}/src/cpu/cpu_clock.pio OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 pico_generate_pio_header(zx_ula_pico ${CMAKE_CURRENT_SOURCE_DIR}/src/dram/dram.pio OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
+pico_generate_pio_header(zx_ula_pico ${CMAKE_CURRENT_SOURCE_DIR}/src/video/video.pio OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
 target_include_directories(zx_ula_pico PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -37,6 +38,7 @@ target_link_libraries(zx_ula_pico
     hardware_pio
     hardware_clocks
     hardware_gpio
+    hardware_dma
 )
 
 # Custom 252 MHz PLL: VCO=1512 MHz, POSTDIV1=6, POSTDIV2=1

@@ -1,6 +1,18 @@
-; dram.pio - placeholder
+; =============================================================================
+; dram.pio — 7 MHz DRAM control output
+;
+; PIO1 SM1, clkdiv=36 → 7 MHz. Core 0 pushes 32-bit DRAM words to TX FIFO.
+; Lower 10 bits output to GP0-GP9 (A[6:0], /RAS, /CAS, /WE).
+;
+; gpio_out (bits 0-9 = GP0-GP9):
+;   bit 0-6 : A[6:0]  (DRAM address)
+;   bit 7   : /RAS
+;   bit 8   : /CAS
+;   bit 9   : /WE
+; =============================================================================
+
 .program dram_ctrl
-    nop
+
 .wrap_target
-    nop
+    out pins, 32      ; output 32-bit word (lower 10 bits → GP0-GP9)
 .wrap

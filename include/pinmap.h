@@ -62,6 +62,18 @@
 #define PIN_RGB_I       46
 #define PIN_RGB_CSYNC   47
 
+// PIO state machine assignments
+// PIO0: SM0 = 7 MHz tick generator, SM1 = 3.5 MHz CPU clock
+// PIO1: SM0 = video output (GPIO HI), SM1 = DRAM control (GPIO LO)
+#define SM_SYNC   0
+#define SM_CPUCLK 1
+#define SM_VIDEO  0
+#define SM_DRAM   1
+
+// DMA channel assignments
+#define DMA_CH_VIDEO  0
+#define DMA_CH_RELOAD 1
+
 // Timing constants
 #define SYS_FREQ_MHZ             252
 #define PIXEL_CLK_MHZ             7

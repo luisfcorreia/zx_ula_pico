@@ -1,161 +1,178 @@
 // =============================================================================
-// video.cpp — Core 0 pixel loop
+// video.cpp — Core 0: capture loop + hblank compute + DMA swap
 //
-// Optimized for 36 cycles/pixel at 7 MHz.
-// Fast path: gate → lut → GPIO write → shift → counter
+// Pipeline (one-line delay):
+//   Line N active display  → capture data bus bytes + compute DRAM words on-the-fly
+//   Hblank                 → compute video words for line N from capture buffer
+//   Line N+1 active display → DMA streams video words to PIO1 SM0
+//
+// Direct register access (no SDK wrappers) in hot path for cycle budget.
 // =============================================================================
-
-// DEBUG: uncomment to generate Y ramp
-// #define DEBUG_Y_RAMP 1
 
 #include "video.h"
 #include "pinmap.h"
 #include "dram/dram.h"
 #include "cpu/cpu.h"
-#include "hardware/pio.h"
-#include "hardware/gpio.h"
-#include "pico/stdlib.h"
-
-#define SM_SYNC 0
+#include "hardware/structs/sio.h"
+#include "hardware/structs/pio.h"
+#include "hardware/structs/dma.h"
 
 extern uint32_t colour_table[16];
 extern uint32_t border_table[8];
-extern uint32_t sync_word;
-extern uint32_t black_word;
+extern uint32_t template_line[PIXELS_PER_LINE];
 
 extern volatile uint8_t shared_border_color;
 volatile bool ula_fetch_window = false;
 
+#define PIO_FSTAT_TXFULL_SM(n) (1u << (16 + (n)))
+#define PIO_FSTAT_RXEMPTY_SM(n) (1u << (8 + (n)))
+
 __attribute__((optimize("O3")))
 [[noreturn]] void video_run(void) {
-
-    // ---- Registered state (mirrors every Verilog reg) ----
     uint32_t hc = 0, vc = 0;
+    bool INT_r = true;
+    bool Border_n = true;
+    uint16_t pix_addr = 0, attr_addr_v = 0;
+    uint8_t FlashCnt = 0;
+    bool VSync_n = true, VSync_prev = true;
+    int cap_buf_idx = 0, vid_buf_idx = 0;
 
-    bool HBlank_n = true,  HSync_n = true;
-    bool VBlank_n = true,  VSync_n = true;
-    bool INT_r    = true;
+    const uint32_t rom_cs_bit = (1u << PIN_ROM_CS_N);
+    const uint32_t int_bit    = (1u << PIN_INT_N);
 
-    bool Border_n    = true;
-    bool VidEN_n     = true;
-    bool DataLatch_n = true;
-    bool AttrLatch_n = true;
-    bool SLoad_r     = false;
-    bool AOLatch_n   = true;
-
-    uint8_t  snap_c_hi  = 0, snap_v_hi  = 0;
-    uint8_t  snap_v_mid = 0, snap_v_lo  = 0;
-    uint16_t pix_addr   = 0, attr_addr_v = 0;
-    uint8_t  a_r        = 0;
-    bool     ras_r = true, cas_r = true, we_r = true;
-
-    uint8_t BitmapReg = 0, SRegister  = 0;
-    uint8_t AttrReg   = 0, AttrOut    = 0;
-    uint8_t FlashCnt  = 0;
-    bool    VSync_prev = true;
+    for (int i = 0; i < CAPTURE_BYTES; i++)
+        capture_buf[cap_buf_idx][i] = 0;
 
     while (true) {
-
-        // ======================================================
         // 1. GATE on 7 MHz tick
-        // ======================================================
-        (void)pio_sm_get_blocking(pio0, SM_SYNC);
+        while (pio0_hw->fstat & PIO_FSTAT_RXEMPTY_SM(SM_SYNC));
+        (void)pio0_hw->rxf[SM_SYNC];
         uint8_t BorderColor = shared_border_color;
 
-        // ======================================================
-        // 2. OUTPUT current registered state
-        // ======================================================
-
-        // --- Video colour ---
-        bool active_video = HBlank_n && VBlank_n;
-        bool sync_active  = !HSync_n || !VSync_n;
-
-        bool flash_pixel = ((AttrOut >> 7) & 1u) && ((FlashCnt >> 4) & 1u);
-        bool Pixel = ((SRegister >> 7) & 1u) ^ flash_pixel;
-
-        // CSYNC: active-low, 0 during hsync or vsync, 1 otherwise
-        uint32_t csync_bit = (uint32_t)(HSync_n && VSync_n) << 15;
-
-#ifdef DEBUG_Y_RAMP
-        // Y ramp based on horizontal position, shows everywhere including sync/blank
-        uint32_t vid_word = build_video_word((uint8_t)(hc & 0xFu), 4, 4, 0, 0, 0, 0, 1);
-        (void)sync_active;
-        (void)active_video;
-        (void)Pixel;
-        (void)flash_pixel;
-        (void)csync_bit;
-        (void)vc;
-#else
-        uint32_t vid_word;
-        if (sync_active) {
-            vid_word = sync_word | csync_bit;  // sync_word already has CSYNC=0
-        } else if (!active_video) {
-            vid_word = black_word | csync_bit;  // black_word already has CSYNC=1
-        } else if (!VidEN_n) {
-            uint8_t ink   = AttrOut & 7u;
-            uint8_t paper = (AttrOut >> 3) & 7u;
-            uint8_t col   = Pixel ? ink : paper;
-            uint8_t lut   = col | ((AttrOut >> 3) & 8u);  // {BRIGHT,G,R,B}
-            uint32_t rgb_bit = (((uint32_t)lut >> 1) & 1u) << 11  // R
-                                          | (((uint32_t)lut >> 2) & 1u) << 12  // G
-                                          | (((uint32_t)lut)      & 1u) << 13  // B
-                                          | (((uint32_t)lut >> 3) & 1u) << 14;  // BRIGHT
-            vid_word = colour_table[lut & 0xFu] | rgb_bit | csync_bit;
-        } else {
-            vid_word = border_table[BorderColor & 7u] | csync_bit;
-        }
-#endif
-        ula_gpio_put_hi(VIDEO_GPIO_HI_MASK, vid_word);
-
-        // --- DRAM control (GP0-GP9) ---
-        {
-            uint32_t dw = ((uint32_t)(a_r & 0x7Fu))
-                        | (ras_r ? (1u << (PIN_RAS_N - PIN_RA_BASE)) : 0u)
-                        | (cas_r ? (1u << (PIN_CAS_N - PIN_RA_BASE)) : 0u)
-                        | (we_r  ? (1u << (PIN_WE_N  - PIN_RA_BASE)) : 0u);
-            gpio_put_masked(PIN_DRAM_MASK, dw);
-        }
-
-        // --- /INT ---
-        gpio_put(PIN_INT_N, INT_r ? 1 : 0);
-
-        // --- Contention window flag for Core 1 ---
-        // display_phase = hc[3] & ~hc[2] = phases 8-11
-        ula_fetch_window = Border_n && (hc & 8u) && !(hc & 4u);
-
-        // ======================================================
-        // 3. READ INPUTS
-        // ======================================================
-        uint32_t gpio_in = gpio_get_all();
-        uint8_t  D       = (uint8_t)((gpio_in >> PIN_D_BASE) & 0xFFu);
-        bool     mreq_n  = (gpio_in >> PIN_MREQ_N) & 1u;
-        bool     wr_n    = (gpio_in >> PIN_WR_N)   & 1u;
-        bool     a14     = (gpio_in >> PIN_A14)     & 1u;
-        bool     a15     = (gpio_in >> PIN_A15)     & 1u;
-
-        // ROM_CS: combinatorial every pixel clock
-        // Verilog: assign rom_cs_n = a15 | a14 | mreq_n
-        gpio_put(PIN_ROM_CS_N, (int)(a15 | a14 | mreq_n));
-
-        // ======================================================
-        // 4. COMPUTE next state
-        // ======================================================
+        // 2. DRAM word (on-the-fly, matches Verilog)
         uint8_t phase = (uint8_t)(hc & 0xFu);
         bool ph3 = (phase >> 3) & 1u;
         bool ph2 = (phase >> 2) & 1u;
         bool ph1 = (phase >> 1) & 1u;
         bool ph0 =  phase       & 1u;
 
-        // Counters
+        uint32_t gpio_in = sio_hw->gpio_in;
+        uint8_t  D       = (uint8_t)((gpio_in >> PIN_D_BASE) & 0xFFu);
+        bool     mreq_n  = (gpio_in >> PIN_MREQ_N) & 1u;
+        bool     wr_n    = (gpio_in >> PIN_WR_N)   & 1u;
+        bool     a14     = (gpio_in >> PIN_A14)     & 1u;
+        bool     a15     = (gpio_in >> PIN_A15)     & 1u;
+
+        if (a15 | a14 | mreq_n)
+            sio_hw->gpio_set = rom_cs_bit;
+        else
+            sio_hw->gpio_clr = rom_cs_bit;
+
+        bool cpu_dram    = !mreq_n && !a15 && a14;
+        bool cpu_cycle   = !ph3 && (ph2 || ph1 || ph0);
+        bool cpu_ras_act = cpu_cycle && ph2 && !ph1;
+        bool cpu_cas_act = cpu_cycle && ph2 &&  ph1 && !ph0;
+
+        uint8_t  a_r  = 0u;
+        bool    ras_r = true, cas_r = true, we_r = true;
+
+        if (cpu_cycle) {
+            if (cpu_ras_act) ras_r = !cpu_dram;
+            if (cpu_cas_act) {
+                cas_r = !cpu_dram;
+                we_r  = !(cpu_dram && !wr_n);
+            }
+        } else if (Border_n) {
+            ras_r = false;
+            if (!ph2) {
+                a_r = ph0 ? (uint8_t)(pix_addr & 0x7Fu) : (uint8_t)(pix_addr >> 7);
+                if (ph1 && !ph0) cas_r = false;
+            } else {
+                a_r = ph0 ? (uint8_t)(attr_addr_v & 0x7Fu) : (uint8_t)(attr_addr_v >> 7);
+                if (ph1 && ph0) cas_r = false;
+            }
+        } else if (ph3 && !ph2 && !ph1) {
+            a_r   = (uint8_t)(hc & 0x7Fu);
+            ras_r = (ph1 && !ph0);
+        }
+
+        uint32_t dram_word = ((uint32_t)(a_r & 0x7Fu))
+                           | (ras_r ? (1u << (PIN_RAS_N - PIN_RA_BASE)) : 0u)
+                           | (cas_r ? (1u << (PIN_CAS_N - PIN_RA_BASE)) : 0u)
+                           | (we_r  ? (1u << (PIN_WE_N  - PIN_RA_BASE)) : 0u);
+
+        while (pio1_hw->fstat & PIO_FSTAT_TXFULL_SM(SM_DRAM));
+        pio1_hw->txf[SM_DRAM] = dram_word;
+
+        // 3. CAPTURE data bus bytes
+        bool active_display = Border_n && (hc < 256u);
+        if (active_display) {
+            uint8_t group = (uint8_t)(hc >> 3);
+            if (ph0 && !ph1 && !ph2 && !ph3)
+                capture_buf[cap_buf_idx][32 + group] = D;
+            if (!ph0 && ph1 && ph2 && ph3)
+                capture_buf[cap_buf_idx][group] = D;
+        }
+
+        // 4. CONTENTION window
+        ula_fetch_window = Border_n && (hc & 8u) && !(hc & 4u);
+
+        // 5. /INT
+        if (INT_r)
+            sio_hw->gpio_set = int_bit;
+        else
+            sio_hw->gpio_clr = int_bit;
+
+        // 6. HBLANK: video compute + DMA swap
+        if (hc >= 256u && hc < 288u) {
+            uint32_t *vid_out = video_buf[vid_buf_idx];
+            int g = (int)(hc - 256u);
+            uint8_t bitmap = capture_buf[cap_buf_idx][g];
+            uint8_t attr   = capture_buf[cap_buf_idx][32 + g];
+            bool flash_pixel = ((attr >> 7) & 1u) && ((FlashCnt >> 4) & 1u);
+            uint8_t ink   = attr & 7u;
+            uint8_t paper = (attr >> 3) & 7u;
+            uint8_t lut_base = ((attr >> 3) & 8u);
+            for (int p = 0; p < 8; p++) {
+                bool pixel = ((bitmap >> 7) & 1u) ^ flash_pixel;
+                bitmap = (uint8_t)(bitmap << 1);
+                uint8_t col = pixel ? ink : paper;
+                uint8_t lut = col | lut_base;
+                uint32_t rgb_bit = (((uint32_t)lut >> 1) & 1u) << 11
+                                 | (((uint32_t)lut >> 2) & 1u) << 12
+                                 | (((uint32_t)lut)      & 1u) << 13
+                                 | (((uint32_t)lut >> 3) & 1u) << 14;
+                vid_out[g * 8 + p] = colour_table[lut & 0xFu] | rgb_bit | (1u << 15);
+            }
+        }
+
+        if (hc >= 288u && hc < 319u) {
+            uint32_t *vid_out = video_buf[vid_buf_idx];
+            int base = 256 + ((int)(hc - 288u) << 2);
+            uint32_t border_word = border_table[BorderColor & 7u] | (1u << 15);
+            for (int i = 0; i < 4; i++) {
+                int idx = base + i;
+                if (idx >= 256 && idx < 320)
+                    vid_out[idx] = border_word;
+                else if (idx >= 416)
+                    vid_out[idx] = border_word;
+                else
+                    vid_out[idx] = template_line[idx];
+            }
+        }
+
+        if (hc == 319u) {
+            dma_hw->ch[DMA_CH_VIDEO].al3_read_addr_trig = (uint32_t)(uintptr_t)video_buf[vid_buf_idx];
+            cap_buf_idx = 1 - cap_buf_idx;
+            vid_buf_idx = 1 - vid_buf_idx;
+            for (int i = 0; i < CAPTURE_BYTES; i++)
+                capture_buf[cap_buf_idx][i] = 0;
+        }
+
+        // 7. NEXT STATE
         uint32_t n_hc = (hc == HC_MAX) ? 0u : hc + 1u;
         uint32_t n_vc = vc;
         if (hc == HC_MAX) n_vc = (vc == VC_MAX) ? 0u : vc + 1u;
-
-        // Sync / blanking
-        bool n_HBlank_n = (hc == 416u) ? true  : (hc == 320u) ? false : HBlank_n;
-        bool n_HSync_n  = (hc == 376u) ? true  : (hc == 344u) ? false : HSync_n;
-        bool n_VBlank_n = (vc == 256u) ? true  : (vc == 248u) ? false : VBlank_n;
-        bool n_VSync_n  = (vc == 252u) ? true  : (vc == 248u) ? false : VSync_n;
 
         bool n_INT_r = INT_r;
         if (vc == 248u) {
@@ -166,95 +183,32 @@ __attribute__((optimize("O3")))
         uint8_t n_FlashCnt = FlashCnt;
         if (VSync_prev && !VSync_n) n_FlashCnt++;
         bool n_VSync_prev = VSync_n;
+        bool n_VSync_n    = (vc == 252u) ? true : (vc == 248u) ? false : VSync_n;
 
-        // Display window
         bool n_Border_n = !(((vc & 0x80u) && (vc & 0x40u)) || (vc & 0x100u) || (hc & 0x100u));
 
-        bool n_VidEN_n = VidEN_n;
-        if (hc & 8u) n_VidEN_n = !Border_n;
-
-        bool n_DataLatch_n = !((phase == 0xBu) && Border_n);
-        bool n_AttrLatch_n = !((phase == 0x0u) && Border_n);
-        bool n_SLoad       =   (phase == 0x4u) && !VidEN_n;
-        bool n_AOLatch_n   =  !(phase == 0x5u);
-
-        // DRAM address snap at phases 7 and 11
-        uint8_t  n_snap_c_hi  = snap_c_hi;
-        uint8_t  n_snap_v_hi  = snap_v_hi;
-        uint8_t  n_snap_v_mid = snap_v_mid;
-        uint8_t  n_snap_v_lo  = snap_v_lo;
-        uint16_t n_pix_addr   = pix_addr;
-        uint16_t n_attr_addr  = attr_addr_v;
-
+        uint16_t n_pix_addr  = pix_addr;
+        uint16_t n_attr_addr = attr_addr_v;
         if (Border_n && (phase == 0x7u || phase == 0xBu)) {
-            n_snap_c_hi  = (uint8_t)((hc >> 3) & 0x1Fu);
-            n_snap_v_hi  = (uint8_t)((vc >> 6) & 0x3u);
-            n_snap_v_mid = (uint8_t)((vc >> 3) & 0x7u);
-            n_snap_v_lo  = (uint8_t)(vc & 0x7u);
-            n_pix_addr   = (uint16_t)(((uint16_t)n_snap_v_hi  << 11) |
-                                      ((uint16_t)n_snap_v_lo  <<  8) |
-                                      ((uint16_t)n_snap_v_mid <<  5) |
-                                       (uint16_t)n_snap_c_hi);
-            n_attr_addr  = (uint16_t)(0x1800u |
-                                      ((uint16_t)n_snap_v_hi  <<  8) |
-                                      ((uint16_t)n_snap_v_mid <<  5) |
-                                       (uint16_t)n_snap_c_hi);
+            uint8_t snap_c_hi  = (uint8_t)((hc >> 3) & 0x1Fu);
+            uint8_t snap_v_hi  = (uint8_t)((vc >> 6) & 0x3u);
+            uint8_t snap_v_mid = (uint8_t)((vc >> 3) & 0x7u);
+            uint8_t snap_v_lo  = (uint8_t)(vc & 0x7u);
+            n_pix_addr  = (uint16_t)(((uint16_t)snap_v_hi  << 11) |
+                                     ((uint16_t)snap_v_lo  <<  8) |
+                                     ((uint16_t)snap_v_mid <<  5) |
+                                      (uint16_t)snap_c_hi);
+            n_attr_addr = (uint16_t)(0x1800u |
+                                     ((uint16_t)snap_v_hi  <<  8) |
+                                     ((uint16_t)snap_v_mid <<  5) |
+                                      (uint16_t)snap_c_hi);
         }
 
-        // DRAM state machine
-        bool cpu_dram    = !mreq_n && !a15 && a14;
-        bool cpu_cycle   = !ph3 && (ph2 || ph1 || ph0);
-        bool cpu_ras_act = cpu_cycle && ph2 && !ph1;
-        bool cpu_cas_act = cpu_cycle && ph2 &&  ph1 && !ph0;
-
-        uint8_t n_a_r  = 0u;
-        bool    n_ras_r = true, n_cas_r = true, n_we_r = true;
-
-        if (cpu_cycle) {
-            if (cpu_ras_act) n_ras_r = !cpu_dram;
-            if (cpu_cas_act) {
-                n_cas_r = !cpu_dram;
-                n_we_r  = !(cpu_dram && !wr_n);
-            }
-        } else if (Border_n) {
-            n_ras_r = false;
-            if (!ph2) {
-                n_a_r = ph0 ? (uint8_t)(pix_addr & 0x7Fu) : (uint8_t)(pix_addr >> 7);
-                if (ph1 && !ph0) n_cas_r = false;
-            } else {
-                n_a_r = ph0 ? (uint8_t)(attr_addr_v & 0x7Fu) : (uint8_t)(attr_addr_v >> 7);
-                if (ph1 && ph0) n_cas_r = false;
-            }
-        } else if (ph3 && !ph2 && !ph1) {
-            n_a_r   = (uint8_t)(hc & 0x7Fu);
-            n_ras_r = false;
-        }
-
-        // Pixel pipeline
-        uint8_t n_BitmapReg = DataLatch_n ? BitmapReg : D;
-        uint8_t n_AttrReg   = AttrLatch_n ? AttrReg   : D;
-        uint8_t n_SRegister = SLoad_r ? BitmapReg : (uint8_t)((SRegister << 1) & 0xFFu);
-        uint8_t n_AttrOut   = AOLatch_n ? AttrOut
-                            : (!VidEN_n ? AttrReg
-                                        : (uint8_t)(BorderColor | (BorderColor << 3)));
-
-        // ======================================================
-        // 5. UPDATE state
-        // ======================================================
-        hc = n_hc;           vc = n_vc;
-        HBlank_n = n_HBlank_n;  HSync_n = n_HSync_n;
-        VBlank_n = n_VBlank_n;  VSync_n = n_VSync_n;
-        INT_r    = n_INT_r;
-        FlashCnt = n_FlashCnt;  VSync_prev = n_VSync_prev;
-        Border_n = n_Border_n;  VidEN_n    = n_VidEN_n;
-        DataLatch_n = n_DataLatch_n;  AttrLatch_n = n_AttrLatch_n;
-        SLoad_r  = n_SLoad;     AOLatch_n  = n_AOLatch_n;
-        snap_c_hi  = n_snap_c_hi;   snap_v_hi  = n_snap_v_hi;
-        snap_v_mid = n_snap_v_mid;  snap_v_lo  = n_snap_v_lo;
-        pix_addr   = n_pix_addr;    attr_addr_v = n_attr_addr;
-        a_r   = n_a_r;
-        ras_r = n_ras_r;  cas_r = n_cas_r;  we_r = n_we_r;
-        BitmapReg = n_BitmapReg;  AttrReg   = n_AttrReg;
-        SRegister = n_SRegister;  AttrOut   = n_AttrOut;
+        // 8. UPDATE
+        hc = n_hc; vc = n_vc;
+        INT_r = n_INT_r;
+        FlashCnt = n_FlashCnt; VSync_prev = n_VSync_prev; VSync_n = n_VSync_n;
+        Border_n = n_Border_n;
+        pix_addr = n_pix_addr; attr_addr_v = n_attr_addr;
     }
 }
