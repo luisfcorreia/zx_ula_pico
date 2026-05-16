@@ -11,6 +11,8 @@ set(CMAKE_CXX_STANDARD 17)
 
 pico_sdk_init()
 
+option(USE_TESTFRAME "Build with static test pattern instead of ULA emulation" OFF)
+
 add_executable(zx_ula_pico
     src/main.cpp
     src/clock/clock.cpp
@@ -21,6 +23,14 @@ add_executable(zx_ula_pico
     src/io/io.cpp
 )
 
+if(USE_TESTFRAME)
+    target_sources(zx_ula_pico PRIVATE
+        testframe/testframe.cpp
+        testframe/testframe_init.cpp
+    )
+    target_compile_definitions(zx_ula_pico PRIVATE USE_TESTFRAME=1)
+endif()
+
 pico_generate_pio_header(zx_ula_pico ${CMAKE_CURRENT_SOURCE_DIR}/src/cpu/sync.pio OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 pico_generate_pio_header(zx_ula_pico ${CMAKE_CURRENT_SOURCE_DIR}/src/cpu/cpu_clock.pio OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 pico_generate_pio_header(zx_ula_pico ${CMAKE_CURRENT_SOURCE_DIR}/src/dram/dram.pio OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
@@ -29,6 +39,7 @@ pico_generate_pio_header(zx_ula_pico ${CMAKE_CURRENT_SOURCE_DIR}/src/video/video
 target_include_directories(zx_ula_pico PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
 )
 

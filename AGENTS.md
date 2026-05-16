@@ -12,6 +12,13 @@ make
 
 Flash `build/zx_ula_pico.uf2` to the device.
 
+**Testframe build** (static color bars, bypasses Z80/DRAM):
+```bash
+mkdir -p build && cd build
+cmake -DUSE_TESTFRAME=ON ..
+make
+```
+
 - Board: `weact_studio_rp2350b_core`, platform: `rp2350-arm-s`
 - pico-sdk is a git submodule — `git clone --recursive` or `git submodule update --init`
 - USB and UART are disabled (no stdio, no printf debugging)
@@ -67,6 +74,11 @@ src/
   dram/dram.cpp     — PIO1 SM1 DRAM control init
   dram/dram.pio     — PIO1 SM1 DRAM control program (out pins, 32)
   io/io.cpp         — Core 1: port 0xFE, contention, keyboard, sound
+testframe/
+  testframe_data.h  — Static color bar attributes + bitmap byte constant
+  testframe.h       — API: testframe_init(), testframe_run()
+  testframe_init.cpp — PIO/DMA init + colour table generation (independent of video_init)
+  testframe.cpp     — Raster loop: hc/vc counters, per-line video word compute, DMA swap
 ```
 
 ## Conventions
@@ -79,3 +91,5 @@ src/
 - `.pio` files auto-generated to `${CMAKE_BINARY_DIR}` by `pico_generate_pio_header()`
 - PIO programs use `out pins, 32` with `autopull=true` — Core 0 pushes full 32-bit words
 - No emojis, minimal comments, concise variable names, match existing style
+- GCC range initializers (`[0 ... N] = val`) are C-only, not valid C++ — use loops or `#define` constants instead
+- CMakeLists.txt include path must include `${CMAKE_CURRENT_SOURCE_DIR}` for top-level headers (e.g. `testframe_data.h`)
